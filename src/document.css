@@ -1,0 +1,231 @@
+/*
+ * document.css — the A4 page itself.
+ *
+ * This file is the single source of truth for how printed output looks, and
+ * it is the only stylesheet that survives into print. Every size is expressed
+ * relative to --doc-font-pt so the fitter can rescale the entire document by
+ * changing one number.
+ */
+
+.page {
+  /* Written by the fitter. The defaults here are only a first paint. */
+  --doc-font-pt: 11;
+  --doc-columns: auto;
+  --doc-line-height: 1.38;
+  --doc-margin-mm: 15;
+  --doc-font-family: 'Segoe UI', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  --doc-ink: #14161a;
+  --doc-muted: #565c66;
+  --doc-rule: #c8ccd4;
+  --doc-accent: #14161a;
+
+  position: relative;
+  box-sizing: border-box;
+  width: 210mm;
+  height: 297mm;
+  padding: calc(var(--doc-margin-mm) * 1mm);
+  background: #fff;
+  color: var(--doc-ink);
+  font-family: var(--doc-font-family);
+  /* Keep printed text crisp rather than screen-smoothed. */
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+
+/* The measured box. The fitter reads scrollHeight/scrollWidth from this. */
+.page-body {
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  font-size: calc(var(--doc-font-pt) * 1pt);
+  line-height: var(--doc-line-height);
+  column-count: var(--doc-columns, auto);
+  column-gap: 7mm;
+  column-fill: auto;
+  /* Hyphenation buys a surprising amount of room in narrow columns. */
+  hyphens: auto;
+  -webkit-hyphens: auto;
+  text-wrap: pretty;
+  /* An unbreakable string wider than a column would otherwise read as
+     horizontal overflow and push the fitter down a size for no reason. */
+  overflow-wrap: break-word;
+  orphans: 2;
+  widows: 2;
+}
+
+.page-body > :first-child {
+  margin-top: 0;
+}
+.page-body > :last-child {
+  margin-bottom: 0;
+}
+
+/* --- Block typography ------------------------------------------------- */
+
+.page-body h1 {
+  font-size: 1.9em;
+  line-height: 1.12;
+  font-weight: 700;
+  letter-spacing: -0.012em;
+  margin: 0 0 0.5em;
+  color: var(--doc-accent);
+  /* A title should never be stranded alone at the foot of a column. */
+  break-after: avoid;
+  text-wrap: balance;
+}
+
+.page-body h2 {
+  font-size: 1.24em;
+  line-height: 1.2;
+  font-weight: 700;
+  margin: 1.15em 0 0.34em;
+  break-after: avoid;
+  text-wrap: balance;
+}
+
+.page-body h3 {
+  font-size: 1.06em;
+  line-height: 1.25;
+  font-weight: 600;
+  margin: 0.95em 0 0.28em;
+  color: var(--doc-muted);
+  break-after: avoid;
+  text-wrap: balance;
+}
+
+.page-body p {
+  margin: 0 0 0.62em;
+  text-align: justify;
+  text-justify: inter-word;
+}
+
+.page-body ul,
+.page-body ol {
+  margin: 0 0 0.62em;
+  padding-left: 1.35em;
+}
+
+.page-body li {
+  margin: 0 0 0.24em;
+  break-inside: avoid;
+}
+
+.page-body li:last-child {
+  margin-bottom: 0;
+}
+
+.page-body blockquote {
+  margin: 0.7em 0;
+  padding: 0.1em 0 0.1em 0.85em;
+  border-left: 0.18em solid var(--doc-rule);
+  color: var(--doc-muted);
+  font-style: italic;
+  break-inside: avoid;
+}
+
+.page-body pre {
+  margin: 0.7em 0;
+  padding: 0.6em 0.75em;
+  background: #f4f5f7;
+  border-radius: 0.25em;
+  font-size: 0.9em;
+  line-height: 1.32;
+  white-space: pre-wrap;
+  word-break: break-word;
+  break-inside: avoid;
+}
+
+.page-body code {
+  font-family: 'Cascadia Mono', Consolas, 'SF Mono', Menlo, monospace;
+  font-size: 0.92em;
+}
+
+.page-body pre code {
+  font-size: 1em;
+}
+
+.page-body hr {
+  border: 0;
+  border-top: 1px solid var(--doc-rule);
+  margin: 0.95em 0;
+}
+
+.page-body a {
+  color: inherit;
+  text-decoration: none;
+  border-bottom: 0.06em solid var(--doc-rule);
+  /* Long URLs are the most common cause of a column blowing out. */
+  word-break: break-word;
+}
+
+.page-body strong {
+  font-weight: 700;
+}
+
+.page-body table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.7em 0;
+  font-size: 0.95em;
+  break-inside: avoid;
+}
+
+.page-body th,
+.page-body td {
+  border: 1px solid var(--doc-rule);
+  padding: 0.3em 0.45em;
+  text-align: left;
+  vertical-align: top;
+}
+
+.page-body th {
+  background: #f4f5f7;
+  font-weight: 600;
+}
+
+/* --- Print ------------------------------------------------------------ */
+
+/*
+ * The classic "one extra blank page" bug comes from the page box being even
+ * a fraction larger than the sheet. We therefore give @page zero margin, let
+ * .page own the margins, and clamp the document root to exactly one sheet.
+ *
+ * This stylesheet only ever loads into a document that contains nothing but
+ * the sheet — the preview iframe, or the standalone file that is printed. So
+ * there is deliberately no rule here that hides anything: an earlier
+ * "hide everything that is not the page" rule matched the page itself and
+ * printed a blank sheet.
+ */
+@page {
+  size: A4 portrait;
+  margin: 0;
+}
+
+@media print {
+  html,
+  body {
+    width: 210mm;
+    height: 297mm;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #fff !important;
+    overflow: hidden;
+  }
+
+  .page {
+    margin: 0 !important;
+    box-shadow: none !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    /* No sibling and no trailing break means no phantom second sheet. */
+    break-after: avoid-page;
+    page-break-after: avoid;
+  }
+
+  .page-body {
+    /* Backgrounds on table headers and code blocks must survive. */
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
+}

@@ -1,0 +1,384 @@
+/*
+ * app.css — the application chrome only.
+ *
+ * Nothing here reaches the printed page: the sheet lives in its own iframe
+ * with document.css. That separation is deliberate, so app styling can never
+ * leak into output.
+ */
+
+:root {
+  --canvas: #e8e9ec;
+  --panel: #ffffff;
+  --panel-sunken: #f7f8f9;
+  --line: #dcdee4;
+  --line-strong: #c5c8d0;
+  --ink: #16181d;
+  --ink-soft: #5b616c;
+  --ink-faint: #6e747f;
+  --accent: #0f766e;
+  --accent-ink: #ffffff;
+  --warn: #b45309;
+  --danger: #b42318;
+  --radius: 8px;
+  --toolbar-h: 56px;
+  --status-h: 30px;
+  color-scheme: light dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --canvas: #16181b;
+    --panel: #212429;
+    --panel-sunken: #1a1d21;
+    --line: #32363d;
+    --line-strong: #434851;
+    --ink: #e8eaee;
+    --ink-soft: #a0a6b0;
+    --ink-faint: #949aa5;
+    --accent: #2dd4bf;
+    --accent-ink: #06231f;
+    --warn: #f59e0b;
+    --danger: #f87171;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+  background: var(--canvas);
+  color: var(--ink);
+  font: 13px/1.45 'Segoe UI', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif;
+  overflow: hidden;
+  /* The app is a desktop shell: never let the OS rubber-band it. */
+  overscroll-behavior: none;
+}
+
+/* --- Toolbar ---------------------------------------------------------- */
+
+.toolbar {
+  flex: 0 0 auto;
+  height: var(--toolbar-h);
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 0 14px;
+  padding-top: env(safe-area-inset-top, 0px);
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-right: 4px;
+}
+
+/* A sheet of paper, drawn with a folded corner. */
+.brand-mark {
+  width: 15px;
+  height: 19px;
+  border: 1.5px solid var(--accent);
+  border-radius: 2px;
+  background: linear-gradient(transparent 52%, var(--accent) 52%, var(--accent) 60%, transparent 60%),
+    linear-gradient(transparent 70%, var(--accent) 70%, var(--accent) 78%, transparent 78%);
+  background-size: 62% 100%;
+  background-position: 3px 0;
+  background-repeat: no-repeat;
+}
+
+.brand-name {
+  font-size: 14px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.controls {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--ink-soft);
+  white-space: nowrap;
+}
+
+.field > span {
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 600;
+  font-size: 10px;
+}
+
+.field select {
+  appearance: none;
+  font: inherit;
+  font-size: 12px;
+  color: var(--ink);
+  background: var(--panel-sunken);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 5px 24px 5px 8px;
+  cursor: pointer;
+  background-image: linear-gradient(45deg, transparent 50%, currentColor 50%),
+    linear-gradient(135deg, currentColor 50%, transparent 50%);
+  background-position: calc(100% - 13px) 52%, calc(100% - 9px) 52%;
+  background-size: 4px 4px;
+  background-repeat: no-repeat;
+}
+
+.field select:focus-visible,
+.btn:focus-visible,
+textarea:focus-visible,
+.link-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.field-check {
+  gap: 6px;
+  cursor: pointer;
+}
+
+.field-check input {
+  accent-color: var(--accent);
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  cursor: pointer;
+}
+
+.field-check > span {
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink);
+}
+
+.actions {
+  margin-left: auto;
+  display: flex;
+  gap: 8px;
+}
+
+.btn {
+  font: inherit;
+  font-size: 12px;
+  font-weight: 550;
+  color: var(--ink);
+  background: var(--panel-sunken);
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  padding: 7px 14px;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+
+.btn:hover:not(:disabled) {
+  background: var(--line);
+}
+
+.btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.btn-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
+
+.btn-primary:hover:not(:disabled) {
+  filter: brightness(1.08);
+  background: var(--accent);
+}
+
+/* --- Workspace -------------------------------------------------------- */
+
+.workspace {
+  flex: 1 1 auto;
+  display: grid;
+  grid-template-columns: minmax(280px, 30%) 1fr;
+  min-height: 0;
+}
+
+.pane {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.pane-source {
+  background: var(--panel);
+  border-right: 1px solid var(--line);
+}
+
+.pane-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 9px 14px 7px;
+  border-bottom: 1px solid var(--line);
+}
+
+.pane-head h2 {
+  margin: 0;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+.link-btn {
+  font: inherit;
+  font-size: 11px;
+  color: var(--ink-soft);
+  background: none;
+  border: 0;
+  padding: 2px 4px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.link-btn:hover {
+  color: var(--ink);
+  background: var(--panel-sunken);
+}
+
+#source {
+  flex: 1 1 auto;
+  width: 100%;
+  min-height: 0;
+  resize: none;
+  border: 0;
+  outline: none;
+  padding: 14px;
+  background: transparent;
+  color: var(--ink);
+  font: 13px/1.6 ui-monospace, 'Cascadia Mono', Consolas, 'SF Mono', Menlo, monospace;
+  tab-size: 2;
+}
+
+#source::placeholder {
+  color: var(--ink-faint);
+}
+
+.pane-preview {
+  position: relative;
+  overflow: auto;
+  padding: 24px;
+  display: block;
+}
+
+.sheet-scaler {
+  /* Height is set in JS to the scaled sheet height so the scroll area is right. */
+  margin: 0 auto;
+  width: 210mm;
+  transform-origin: top center;
+  will-change: transform;
+}
+
+#sheet {
+  display: block;
+  width: 210mm;
+  height: 297mm;
+  border: 0;
+  border-radius: 2px;
+  background: #fff;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.16), 0 10px 28px -6px rgb(0 0 0 / 0.22);
+}
+
+/* --- Status bar ------------------------------------------------------- */
+
+.status {
+  flex: 0 0 auto;
+  height: var(--status-h);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 14px;
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  background: var(--panel);
+  border-top: 1px solid var(--line);
+  font-size: 11px;
+  color: var(--ink-soft);
+  font-variant-numeric: tabular-nums;
+}
+
+.status-sep {
+  width: 1px;
+  height: 11px;
+  background: var(--line-strong);
+}
+
+.status-flex {
+  flex: 1 1 auto;
+}
+
+.status-note {
+  font-weight: 600;
+}
+
+.status-note[data-level='warn'] {
+  color: var(--warn);
+}
+
+.status-note[data-level='danger'] {
+  color: var(--danger);
+}
+
+.status-note[data-level='ok'] {
+  color: var(--accent);
+}
+
+/* --- Narrow windows --------------------------------------------------- */
+
+@media (max-width: 900px) {
+  .workspace {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(140px, 32%) 1fr;
+  }
+
+  .pane-source {
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .toolbar {
+    height: auto;
+    flex-wrap: wrap;
+    gap: 10px;
+    padding: 10px 12px;
+  }
+
+  .actions {
+    margin-left: 0;
+    width: 100%;
+  }
+
+  .actions .btn {
+    flex: 1 1 0;
+  }
+}

@@ -1,0 +1,74 @@
+{
+  "name": "onepage",
+  "productName": "OnePage",
+  "version": "1.0.0",
+  "description": "Paste anything, fit it to exactly one A4 page, then print or export to PDF and Word.",
+  "private": true,
+  "type": "module",
+  "main": "electron/main.js",
+  "scripts": {
+    "dev": "vite",
+    "start": "concurrently -k -n vite,electron -c cyan,magenta \"vite\" \"wait-on tcp:5183 && cross-env ONEPAGE_DEV_URL=http://localhost:5183 electron .\"",
+    "build": "vite build",
+    "preview": "npm run build && electron .",
+    "dist:mac": "npm run build && electron-builder --mac",
+    "dist:win": "npm run build && electron-builder --win",
+    "dist:all": "npm run build && electron-builder --mac --win",
+    "test": "node --test test/*.test.js"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1",
+    "cross-env": "^10.1.0",
+    "electron": "^44.3.0",
+    "electron-builder": "^26.15.3",
+    "vite": "^8.3.0",
+    "wait-on": "^9.0.1"
+  },
+  "dependencies": {
+    "docx": "^9.7.1"
+  },
+  "build": {
+    "appId": "app.onepage.desktop",
+    "productName": "OnePage",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "OnePage-${version}-Setup.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "shortcutName": "OnePage"
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
+      ],
+      "category": "public.app-category.productivity",
+      "artifactName": "OnePage-${version}-${arch}.${ext}"
+    }
+  }
+}

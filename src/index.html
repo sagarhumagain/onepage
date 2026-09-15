@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>OnePage</title>
+    <link rel="stylesheet" href="./app.css" />
+  </head>
+  <body>
+    <header class="toolbar">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <span class="brand-name">OnePage</span>
+      </div>
+
+      <div class="controls">
+        <label class="field">
+          <span>Margins</span>
+          <select id="margin">
+            <option value="10">Narrow · 10mm</option>
+            <option value="15" selected>Normal · 15mm</option>
+            <option value="20">Wide · 20mm</option>
+            <option value="25">Extra · 25mm</option>
+          </select>
+        </label>
+
+        <label class="field">
+          <span>Typeface</span>
+          <select id="typeface">
+            <option value="sans" selected>Calibri</option>
+            <option value="arial">Arial</option>
+            <option value="serif">Georgia</option>
+            <option value="times">Times New Roman</option>
+            <option value="narrow">Arial Narrow</option>
+            <option value="mono">Courier New</option>
+          </select>
+        </label>
+
+        <label class="field">
+          <span>Columns</span>
+          <select id="columns">
+            <option value="auto" selected>Auto</option>
+            <option value="1">One</option>
+            <option value="2">Two</option>
+            <option value="3">Three</option>
+          </select>
+        </label>
+
+        <label class="field field-check">
+          <input type="checkbox" id="fill" checked />
+          <span>Fill page</span>
+        </label>
+      </div>
+
+      <div class="actions">
+        <button type="button" id="btn-docx" class="btn">Word</button>
+        <button type="button" id="btn-pdf" class="btn">PDF</button>
+        <button type="button" id="btn-print" class="btn btn-primary">Print</button>
+      </div>
+    </header>
+
+    <main class="workspace">
+      <section class="pane pane-source">
+        <div class="pane-head">
+          <h2>Source</h2>
+          <button type="button" id="btn-clear" class="link-btn">Clear</button>
+        </div>
+        <textarea
+          id="source"
+          spellcheck="false"
+          placeholder="Paste anything here — a Word document, an email, notes, a report.&#10;&#10;It will be rebuilt as a clean document and scaled to fit exactly one A4 page."
+        ></textarea>
+      </section>
+
+      <section class="pane pane-preview" id="preview">
+        <div class="sheet-scaler" id="scaler">
+          <iframe id="sheet" title="A4 preview" scrolling="no"></iframe>
+        </div>
+      </section>
+    </main>
+
+    <footer class="status" id="status">
+      <span class="status-item" id="stat-words">0 words</span>
+      <span class="status-sep" aria-hidden="true"></span>
+      <span class="status-item" id="stat-size">—</span>
+      <span class="status-sep" aria-hidden="true"></span>
+      <span class="status-item" id="stat-layout">—</span>
+      <span class="status-flex"></span>
+      <span class="status-note" id="stat-note"></span>
+    </footer>
+
+    <script type="module" src="./main.js"></script>
+  </body>
+</html>
