@@ -82,6 +82,13 @@ export function render(blocks) {
         out.push(`<table>${head}<tbody>${body}</tbody></table>`);
         break;
       }
+      case 'image': {
+        const align = b.align || 'center';
+        const alt = escapeHtml(b.alt || '');
+        const caption = b.alt ? `<div class="doc-image-caption">${alt}</div>` : '';
+        out.push(`<div class="doc-image" data-align="${align}"><img src="${escapeHtml(b.src)}" alt="${alt}" />${caption}</div>`);
+        break;
+      }
       default:
         break;
     }

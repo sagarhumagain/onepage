@@ -18,13 +18,14 @@
   --doc-muted: #565c66;
   --doc-rule: #c8ccd4;
   --doc-accent: #14161a;
+  --doc-bg: #ffffff;
 
   position: relative;
   box-sizing: border-box;
   width: 210mm;
   height: 297mm;
   padding: calc(var(--doc-margin-mm) * 1mm);
-  background: #fff;
+  background: var(--doc-bg);
   color: var(--doc-ink);
   font-family: var(--doc-font-family);
   /* Keep printed text crisp rather than screen-smoothed. */
@@ -182,6 +183,57 @@
 .page-body th {
   background: #f4f5f7;
   font-weight: 600;
+}
+
+/* --- Images ----------------------------------------------------------- */
+
+.page-body .doc-image {
+  margin: 0.7em 0;
+  break-inside: avoid;
+}
+
+.page-body .doc-image img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border-radius: 0.15em;
+}
+
+.page-body .doc-image[data-align="left"] {
+  text-align: left;
+}
+
+.page-body .doc-image[data-align="center"] {
+  text-align: center;
+}
+
+.page-body .doc-image[data-align="right"] {
+  text-align: right;
+}
+
+.page-body .doc-image[data-align="left"] img,
+.page-body .doc-image[data-align="right"] img {
+  max-width: 65%;
+}
+
+.page-body .doc-image[data-align="center"] img {
+  max-width: 90%;
+}
+
+.page-body .doc-image-caption {
+  font-size: 0.82em;
+  color: var(--doc-muted);
+  margin-top: 0.25em;
+  text-align: center;
+}
+
+/* --- Background with padding ------------------------------------------ */
+
+.page-body .bg-padded {
+  padding: 0.65em 0.85em;
+  margin: 0.7em 0;
+  border-radius: 0.25em;
+  break-inside: avoid;
 }
 
 /* --- Print ------------------------------------------------------------ */

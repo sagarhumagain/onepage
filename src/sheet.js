@@ -64,6 +64,7 @@ export function standaloneHtml(bodyHtml, layout) {
     `--doc-line-height:${layout.lineHeight}`,
     `--doc-margin-mm:${layout.marginMm}`,
     `--doc-font-family:${layout.fontFamily}`,
+    `--doc-bg:${layout.bgColor || '#ffffff'}`,
   ].join(';');
 
   return `<!doctype html>

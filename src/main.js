@@ -33,9 +33,16 @@ const els = {
   statSize: $('stat-size'),
   statLayout: $('stat-layout'),
   statNote: $('stat-note'),
+  fontUp: $('font-up'),
+  fontDown: $('font-down'),
+  fontSizeVal: $('font-size-val'),
+  bgColor: $('bg-color'),
+  paddingToggle: $('padding-toggle'),
+  btnImage: $('btn-image'),
+  imageFile: $('image-file'),
 };
 
-const STORE_KEY = 'onepage.state.v1';
+const STORE_KEY = 'onepage.state.v2';
 
 let layout = { fontPt: 11, columns: 1, lineHeight: 1.38, marginMm: 15, overflow: false, belowFloor: false };
 let sheetRefs = null;
@@ -44,12 +51,14 @@ let docTitle = 'Document';
 let running = false;
 let queued = false;
 
-/* --- Typeface availability ---------------------------------------------
- * Word re-runs line breaking with the real font metrics. If the preview
- * measured a fallback because the chosen family is missing, the exported
- * document would not match. So availability is resolved once, up front, and
- * the same resolved family is used for measuring AND for export.
- */
+/* --- Formatting state -------------------------------------------------- */
+
+let fontScale = 1.0;
+let bgColor = '#ffffff';
+let bgPadding = false;
+let imageBlocks = [];
+
+/* --- Typeface availability --------------------------------------------- */
 
 function fontAvailable(family) {
   try {
@@ -75,10 +84,18 @@ function saveState() {
   try {
     localStorage.setItem(
       STORE_KEY,
-      JSON.stringify({ ...readSettings(), typeface: els.typeface.value, text: els.source.value })
+      JSON.stringify({
+        ...readSettings(),
+        typeface: els.typeface.value,
+        text: els.source.value,
+        fontScale,
+        bgColor,
+        bgPadding,
+        imageBlocks,
+      })
     );
   } catch {
-    /* private mode or blocked storage — the app works without persistence */
+    /* private mode or blocked storage */
   }
 }
 
@@ -92,20 +109,46 @@ function restoreState() {
     if (s.typeface && TYPEFACES[s.typeface]) els.typeface.value = s.typeface;
     if (s.columns != null) els.columns.value = String(s.columns);
     if (typeof s.fillPage === 'boolean') els.fill.checked = s.fillPage;
+    if (typeof s.fontScale === 'number') fontScale = s.fontScale;
+    if (typeof s.bgColor === 'string') bgColor = s.bgColor;
+    if (typeof s.bgPadding === 'boolean') bgPadding = s.bgPadding;
+    if (Array.isArray(s.imageBlocks)) imageBlocks = s.imageBlocks;
+
+    els.bgColor.value = bgColor;
+    els.paddingToggle.checked = bgPadding;
+    updateFontSizeUI();
   } catch {
     /* ignore corrupt or unavailable storage */
   }
 }
 
+/* --- Font size controls ------------------------------------------------- */
+
+function updateFontSizeUI() {
+  els.fontSizeVal.textContent = Math.round(fontScale * 11);
+  els.fontDown.disabled = fontScale <= 0.3;
+  els.fontUp.disabled = fontScale >= 3.0;
+}
+
+function adjustFontScale(delta) {
+  fontScale = Math.max(0.3, Math.min(3.0, fontScale + delta));
+  updateFontSizeUI();
+  applyFormatting();
+  update();
+  saveState();
+}
+
+/* --- Formatting application -------------------------------------------- */
+
+function applyFormatting() {
+  if (!sheetRefs) return;
+  sheetRefs.page.style.setProperty('--doc-bg', bgColor);
+}
+
 /* --- Preview scaling ---------------------------------------------------- */
 
-/**
- * Scale the sheet to fit the pane on BOTH axes. The whole point of the app is
- * that everything lands on one page, so the page has to be visible in one
- * glance — fitting to width alone leaves the foot of the sheet below the fold.
- */
 function rescalePreview() {
-  const pad = 48; // matches .pane-preview padding
+  const pad = 48;
   const byWidth = (els.preview.clientWidth - pad) / A4.widthPx;
   const byHeight = (els.preview.clientHeight - pad) / A4.heightPx;
   const scale = Math.max(0.2, Math.min(1, byWidth, byHeight));
@@ -117,6 +160,28 @@ function rescalePreview() {
 
 function currentDoc() {
   const blocks = parse(els.source.value);
+
+  // Merge in image blocks at their stored positions
+  if (imageBlocks.length) {
+    const merged = [];
+    let imgIdx = 0;
+    for (let i = 0; i < blocks.length; i++) {
+      // Insert images before the block at their stored position
+      while (imgIdx < imageBlocks.length && imageBlocks[imgIdx].beforeIndex <= i) {
+        merged.push(imageBlocks[imgIdx]);
+        imgIdx++;
+      }
+      merged.push(blocks[i]);
+    }
+    while (imgIdx < imageBlocks.length) {
+      merged.push(imageBlocks[imgIdx]);
+      imgIdx++;
+    }
+    const first = merged.find((b) => b.type === 'h1' || b.type === 'h2' || b.type === 'p');
+    docTitle = first && first.text ? first.text.slice(0, 80) : 'Document';
+    return { blocks: merged, html: render(merged) };
+  }
+
   const first = blocks.find((b) => b.type === 'h1' || b.type === 'h2' || b.type === 'p');
   docTitle = first && first.text ? first.text.slice(0, 80) : 'Document';
   return { blocks, html: render(blocks) };
@@ -136,20 +201,29 @@ async function update() {
     sheetRefs.body.innerHTML = html;
     sheetRefs.page.style.setProperty('--doc-font-family', face.css);
 
+    // Apply bg padding to page body
+    if (bgPadding) {
+      sheetRefs.body.classList.add('bg-padded');
+    } else {
+      sheetRefs.body.classList.remove('bg-padded');
+    }
+
+    applyFormatting();
+
     const words = wordCount(els.source.value);
 
-    if (!html.trim()) {
+    if (!html.trim() && !imageBlocks.length) {
       layout = {
         fontPt: 11, columns: 1, lineHeight: 1.38, marginMm: settings.marginMm,
         overflow: false, belowFloor: false, marginsReduced: false,
       };
-      fitter.applyState(11, 1, 1.38, settings.marginMm);
+      fitter.applyState(11 * fontScale, 1, 1.38, settings.marginMm);
       setStatus(0, null, face);
       setExportsEnabled(false);
       return;
     }
 
-    layout = await fitter.fit(settings);
+    layout = await fitter.fit({ ...settings, fontScale });
     setStatus(words, layout, face);
     setExportsEnabled(true);
   } finally {
@@ -199,6 +273,58 @@ function setStatus(words, fitted, face) {
   }
 }
 
+/* --- Image handling ----------------------------------------------------- */
+
+function readFileAsDataURL(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+function getImageDimensions(src) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => resolve({ width: img.naturalWidth, height: img.naturalHeight });
+    img.onerror = () => resolve({ width: 400, height: 300 });
+    img.src = src;
+  });
+}
+
+async function addImageFromFile(file) {
+  if (!file || !file.type.startsWith('image/')) return;
+  const src = await readFileAsDataURL(file);
+  const dims = await getImageDimensions(src);
+  const blockCount = parse(els.source.value).length;
+  imageBlocks.push({
+    type: 'image',
+    src,
+    alt: file.name || '',
+    align: 'center',
+    beforeIndex: blockCount,
+  });
+  update();
+  saveState();
+}
+
+function handleImagePaste(event) {
+  const dt = event.clipboardData;
+  if (!dt) return false;
+
+  const items = dt.items;
+  for (const item of items) {
+    if (item.type.startsWith('image/')) {
+      event.preventDefault();
+      const file = item.getAsFile();
+      if (file) addImageFromFile(file);
+      return true;
+    }
+  }
+  return false;
+}
+
 /* --- Exports ------------------------------------------------------------ */
 
 async function sheetHtml() {
@@ -210,6 +336,7 @@ async function sheetHtml() {
     marginMm: layout.marginMm,
     fontFamily: currentFace().css,
     title: docTitle,
+    bgColor,
   });
 }
 
@@ -236,8 +363,9 @@ function insertAtCursor(textarea, text) {
 }
 
 function onPaste(event) {
+  if (handleImagePaste(event)) return;
   const text = textFromPaste(event);
-  if (!text) return; // let the browser handle images or unknown flavours
+  if (!text) return;
   event.preventDefault();
   insertAtCursor(els.source, text);
   update();
@@ -273,9 +401,49 @@ function wire() {
 
   els.clear.addEventListener('click', () => {
     els.source.value = '';
+    imageBlocks = [];
     els.source.focus();
     update();
     saveState();
+  });
+
+  // Font size controls
+  els.fontUp.addEventListener('click', () => adjustFontScale(0.1));
+  els.fontDown.addEventListener('click', () => adjustFontScale(-0.1));
+
+  // Background color
+  els.bgColor.addEventListener('input', () => {
+    bgColor = els.bgColor.value;
+    applyFormatting();
+    saveState();
+  });
+
+  // Padding toggle
+  els.paddingToggle.addEventListener('change', () => {
+    bgPadding = els.paddingToggle.checked;
+    update();
+    saveState();
+  });
+
+  // Image upload
+  els.btnImage.addEventListener('click', () => els.imageFile.click());
+  els.imageFile.addEventListener('change', () => {
+    for (const file of els.imageFile.files) {
+      addImageFromFile(file);
+    }
+    els.imageFile.value = '';
+  });
+
+  // Drag and drop images onto the source area
+  els.source.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+  });
+  els.source.addEventListener('drop', (e) => {
+    e.preventDefault();
+    for (const file of e.dataTransfer.files) {
+      if (file.type.startsWith('image/')) addImageFromFile(file);
+    }
   });
 
   els.print.addEventListener('click', () =>
@@ -301,7 +469,6 @@ function wire() {
 
   window.addEventListener('resize', debounce(rescalePreview, 60));
 
-  // Ctrl/Cmd+P must print the sheet, not the app chrome.
   window.addEventListener('keydown', (e) => {
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'p') {
       e.preventDefault();
@@ -320,10 +487,6 @@ function flash(message) {
 
 /* --- Boot --------------------------------------------------------------- */
 
-/**
- * Test hook. `import.meta.env.DEV` is replaced with a literal at build time,
- * so this block is dropped entirely from the production bundle.
- */
 function exposeForTests() {
   if (!import.meta.env.DEV) return;
   window.__onepage = {
@@ -350,6 +513,8 @@ async function boot() {
   wire();
   rescalePreview();
   exposeForTests();
+  updateFontSizeUI();
+  applyFormatting();
   await update();
   els.source.focus();
   document.documentElement.dataset.ready = 'true';

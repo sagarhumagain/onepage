@@ -23,6 +23,7 @@ import {
   BorderStyle,
   Document,
   ExternalHyperlink,
+  ImageRun,
   LineRuleType,
   Packer,
   Paragraph,
@@ -281,6 +282,32 @@ export async function buildDocx({ blocks, layout, face, title }) {
               spacing: { before: 0, after: ptToTwip(mm.sizePt * 0.4), line: 1, lineRule: LineRuleType.EXACTLY },
             })
           );
+        }
+        break;
+      }
+      case 'image': {
+        if (b.src && b.src.startsWith('data:')) {
+          try {
+            const base64 = b.src.split(',')[1];
+            const imgBuffer = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
+            const maxWidth = Math.floor(columnWidth * 0.85);
+            children.push(
+              new Paragraph({
+                children: [
+                  new ImageRun({
+                    data: imgBuffer,
+                    transformation: { width: maxWidth, height: Math.round(maxWidth * 0.6) },
+                    altText: { title: b.alt || 'Image', description: b.alt || 'Image', name: b.alt || 'image' },
+                  }),
+                ],
+                alignment: b.align === 'left' ? AlignmentType.LEFT : b.align === 'right' ? AlignmentType.RIGHT : AlignmentType.CENTER,
+                spacing: { before: ptToTwip(basePt * 0.5), after: ptToTwip(basePt * 0.5), line: 1, lineRule: LineRuleType.EXACTLY },
+                widowControl: false,
+              })
+            );
+          } catch {
+            // Skip images that can't be decoded
+          }
         }
         break;
       }

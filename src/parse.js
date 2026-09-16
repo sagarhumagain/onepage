@@ -11,7 +11,8 @@
 /** @typedef {{type:'ul'|'ol', items:string[], start?:number}} ListBlock */
 /** @typedef {{type:'hr'}} RuleBlock */
 /** @typedef {{type:'table', head:string[], rows:string[][]}} TableBlock */
-/** @typedef {TextBlock|ListBlock|RuleBlock|TableBlock} Block */
+/** @typedef {{type:'image', src:string, alt?:string, align?:string}} ImageBlock */
+/** @typedef {TextBlock|ListBlock|RuleBlock|TableBlock|ImageBlock} Block */
 
 /** Build a string from code points. Keeps this source file pure ASCII. */
 const ch = (...codes) => String.fromCharCode(...codes);

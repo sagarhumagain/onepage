@@ -191,6 +191,7 @@ export function createFitter({ page, body }) {
    *   overflow:boolean, belowFloor:boolean, marginsReduced:boolean, iterations:number}>}
    */
   async function fit(options = {}) {
+    const fontScale = options.fontScale || 1.0;
     const cfg = { ...DEFAULTS, ...options };
 
     // Measuring before fonts settle yields a size that shifts once they load.
@@ -203,7 +204,7 @@ export function createFitter({ page, body }) {
     // One write then one read per probe, in that order, in the same task: the
     // read flushes pending layout, so the number can never be stale.
     const probeFor = (r) => (pt) => {
-      applyState(pt, r.cols, r.lineHeight, r.marginMm);
+      applyState(pt * fontScale, r.cols, r.lineHeight, r.marginMm);
       return overflowBy(body, sentinel, cfg.safety, cfg.tolerancePx);
     };
 
@@ -236,7 +237,7 @@ export function createFitter({ page, body }) {
       if (cfg.fillPage && !r.emergency && r.hi === cfg.fillMaxPt && pt >= r.hi - 0.05) {
         const grown = bisect(
           (lh) => {
-            applyState(pt, r.cols, lh, r.marginMm);
+            applyState(pt * fontScale, r.cols, lh, r.marginMm);
             return overflowBy(body, sentinel, cfg.safety, cfg.tolerancePx);
           },
           r.lineHeight,
@@ -245,11 +246,11 @@ export function createFitter({ page, body }) {
         );
         iterations += grown.iterations;
         lineHeight = grown.fits ? grown.value : r.lineHeight;
-        applyState(pt, r.cols, lineHeight, r.marginMm);
+        applyState(pt * fontScale, r.cols, lineHeight, r.marginMm);
       }
 
       return {
-        fontPt: round(pt, 2),
+        fontPt: round(pt * fontScale, 2),
         columns: r.cols,
         lineHeight: round(lineHeight, 3),
         marginMm: r.marginMm,
@@ -262,9 +263,9 @@ export function createFitter({ page, body }) {
 
     // Nothing fits, even at the emergency size. Keep the smallest layout and
     // report it, so the UI can say so instead of silently clipping.
-    applyState(last.lo, last.cols, last.lineHeight, last.marginMm);
+    applyState(last.lo * fontScale, last.cols, last.lineHeight, last.marginMm);
     return {
-      fontPt: round(last.lo, 2),
+      fontPt: round(last.lo * fontScale, 2),
       columns: last.cols,
       lineHeight: last.lineHeight,
       marginMm: last.marginMm,

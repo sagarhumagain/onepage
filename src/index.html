@@ -50,6 +50,32 @@
           <input type="checkbox" id="fill" checked />
           <span>Fill page</span>
         </label>
+
+        <span class="field-sep" aria-hidden="true"></span>
+
+        <label class="field">
+          <span>Font</span>
+          <div class="font-size-controls">
+            <button type="button" id="font-down" class="btn-icon" title="Decrease font size">A−</button>
+            <span class="font-size-val" id="font-size-val">11</span>
+            <button type="button" id="font-up" class="btn-icon" title="Increase font size">A+</button>
+          </div>
+        </label>
+
+        <label class="field">
+          <span>Background</span>
+          <input type="color" id="bg-color" value="#ffffff" class="color-pick" title="Page background color" />
+        </label>
+
+        <label class="field field-check">
+          <input type="checkbox" id="padding-toggle" />
+          <span>Padding</span>
+        </label>
+
+        <span class="field-sep" aria-hidden="true"></span>
+
+        <button type="button" id="btn-image" class="btn" title="Add image (or paste one)">Image</button>
+        <input type="file" id="image-file" accept="image/*" multiple hidden />
       </div>
 
       <div class="actions">
@@ -68,7 +94,7 @@
         <textarea
           id="source"
           spellcheck="false"
-          placeholder="Paste anything here — a Word document, an email, notes, a report.&#10;&#10;It will be rebuilt as a clean document and scaled to fit exactly one A4 page."
+          placeholder="Paste anything here — a Word document, an email, notes, a report.&#10;&#10;It will be rebuilt as a clean document and scaled to fit exactly one A4 page.&#10;&#10;Tip: paste images directly or click the Image button."
         ></textarea>
       </section>
 

@@ -355,6 +355,87 @@ textarea:focus-visible,
 
 /* --- Narrow windows --------------------------------------------------- */
 
+/* --- New formatting controls -------------------------------------------- */
+
+.field-sep {
+  width: 1px;
+  height: 20px;
+  background: var(--line-strong);
+  flex-shrink: 0;
+}
+
+.font-size-controls {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.btn-icon {
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ink);
+  background: var(--panel-sunken);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  width: 26px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+  line-height: 1;
+  transition: background 120ms ease;
+}
+
+.btn-icon:hover:not(:disabled) {
+  background: var(--line);
+}
+
+.btn-icon:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.font-size-val {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ink);
+  min-width: 20px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.color-pick {
+  width: 26px;
+  height: 26px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 2px;
+  cursor: pointer;
+  background: var(--panel-sunken);
+}
+
+.color-pick::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+
+.color-pick::-webkit-color-swatch {
+  border: 0;
+  border-radius: 2px;
+}
+
+/* --- Image upload button highlight -------------------------------------- */
+
+.btn-image-active {
+  background: var(--accent) !important;
+  border-color: var(--accent) !important;
+  color: var(--accent-ink) !important;
+}
+
+/* --- Narrow windows --------------------------------------------------- */
+
 @media (max-width: 900px) {
   .workspace {
     grid-template-columns: 1fr;
