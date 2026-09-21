@@ -11,9 +11,9 @@
     "start": "concurrently -k -n vite,electron -c cyan,magenta \"vite\" \"wait-on tcp:5183 && cross-env ONEPAGE_DEV_URL=http://localhost:5183 electron .\"",
     "build": "vite build",
     "preview": "npm run build && electron .",
-    "dist:mac": "npm run build && electron-builder --mac",
-    "dist:win": "npm run build && electron-builder --win",
-    "dist:all": "npm run build && electron-builder --mac --win",
+    "dist:mac": "npm run build && electron-builder --mac --publish never",
+    "dist:win": "npm run build && electron-builder --win --publish never",
+    "dist:all": "npm run build && electron-builder --mac --win --publish never",
     "test": "node --test test/*.test.js"
   },
   "devDependencies": {
