@@ -11,8 +11,8 @@
 /** @typedef {{type:'ul'|'ol', items:string[], start?:number}} ListBlock */
 /** @typedef {{type:'hr'}} RuleBlock */
 /** @typedef {{type:'table', head:string[], rows:string[][]}} TableBlock */
-/** @typedef {{type:'image', src:string, alt?:string, align?:string}} ImageBlock */
-/** @typedef {TextBlock|ListBlock|RuleBlock|TableBlock|ImageBlock} Block */
+/** @typedef {{type:'image', id:string}} ImageRef */
+/** @typedef {TextBlock|ListBlock|RuleBlock|TableBlock|ImageRef} Block */
 
 /** Build a string from code points. Keeps this source file pure ASCII. */
 const ch = (...codes) => String.fromCharCode(...codes);
@@ -54,6 +54,13 @@ const FENCE = /^[ \t]*(```|~~~)/;
 const NUMBERED_HEADING = /^\d+(\.\d+)*\.?\s+\S/;
 const TABLE_DIVIDER = /^[ \t]*\|?[ \t]*:?-{2,}:?[ \t]*(\|[ \t]*:?-{2,}:?[ \t]*)+\|?[ \t]*$/;
 const SETEXT = /^[ \t]*(=|-){3,}[ \t]*$/;
+/**
+ * An image placed in the document. The picture itself lives outside the text
+ * — a data URL is not something anyone wants to edit — but its *position* is
+ * a line like any other, so moving an image is moving a line, and text above
+ * and below it flows around it exactly as two paragraphs would.
+ */
+export const IMAGE_REF = /^[ \t]*\[image:([A-Za-z0-9_-]{1,40})\][ \t]*$/;
 
 /** Collapse the many ways real-world text encodes whitespace into something uniform. */
 export function normalize(raw) {
@@ -163,6 +170,13 @@ export function parse(raw) {
       continue;
     }
 
+    const imageRef = line.match(IMAGE_REF);
+    if (imageRef) {
+      blocks.push({ type: 'image', id: imageRef[1] });
+      i++;
+      continue;
+    }
+
     // ``` fenced code
     if (FENCE.test(line)) {
       const fence = line.trim().slice(0, 3);
@@ -238,7 +252,13 @@ export function parse(raw) {
         const isMarker = ordered ? !!(o || oa) : !!b;
         if (isMarker) {
           items.push((b ? b[1] : o ? o[2] : oa[1]).trim());
-        } else if (items.length && !looksLikeHeading(l, lines[i + 1]) && !ATX.test(l) && !QUOTE.test(l)) {
+        } else if (
+          items.length &&
+          !looksLikeHeading(l, lines[i + 1]) &&
+          !ATX.test(l) &&
+          !QUOTE.test(l) &&
+          !IMAGE_REF.test(l)
+        ) {
           items[items.length - 1] += ' ' + l.trim();
         } else break;
         i++;
@@ -274,7 +294,13 @@ export function parse(raw) {
       const l = lines[i];
       if (
         buf.length &&
-        (BULLET_RE.test(l) || ORDERED.test(l) || ATX.test(l) || RULE.test(l) || QUOTE.test(l) || FENCE.test(l))
+        (BULLET_RE.test(l) ||
+          ORDERED.test(l) ||
+          ATX.test(l) ||
+          RULE.test(l) ||
+          QUOTE.test(l) ||
+          FENCE.test(l) ||
+          IMAGE_REF.test(l))
       )
         break;
       if (buf.length && looksLikeHeading(l, lines[i + 1])) break;
@@ -304,7 +330,14 @@ function tidy(blocks) {
   };
   for (const b of blocks) {
     if (b.type === 'h1' || b.type === 'h2' || b.type === 'h3') b.text = unwrap(b.text);
-    else if (b.type === 'table' && b.head) b.head = b.head.map(unwrap);
+    else if (b.type === 'table' && b.head) {
+      b.head = b.head.map(unwrap);
+      // Square the grid off here, once, so every consumer — the HTML
+      // renderer, the Word exporter and the highlight index — addresses the
+      // same cells.
+      const cols = b.head.length;
+      if (cols) b.rows = (b.rows || []).map((r) => Array.from({ length: cols }, (_, j) => r[j] || ''));
+    }
   }
   return blocks;
 }

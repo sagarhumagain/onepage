@@ -52,3 +52,26 @@ jobs:
             release/*.exe
             release/*.dmg
           if-no-files-found: error
+
+  # A tag is what makes a release: the installers built above are attached to
+  # it, so "download OnePage" is a link rather than a CI artifact that expires.
+  release:
+    needs: package
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Publish the installers
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" \
+            --repo "${{ github.repository }}" \
+            --title "OnePage ${{ github.ref_name }}" \
+            --generate-notes \
+            artifacts/*/*.dmg artifacts/*/*.exe

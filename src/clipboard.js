@@ -9,6 +9,11 @@
  * So when HTML is on the clipboard we walk it for *structure only* and emit
  * the lightweight text conventions that parse.js already understands. No
  * source styling survives, which is exactly the intent.
+ *
+ * The same walker runs in the other direction: when the preview is typed into,
+ * the edited page is turned back into source text through `htmlToText`. That
+ * is deliberate — a second, nearly identical serialiser would be a second
+ * place for the two representations to disagree.
  */
 
 /** Elements whose text content is markup metadata, never document content. */
@@ -101,6 +106,17 @@ function walk(node, lines, depth) {
 
     if (tag === 'HR') {
       lines.push({ kind: 'block', text: '---' });
+      continue;
+    }
+
+    // OnePage's own pages come back through here when the preview is edited
+    // in place. An image is a reference on a line of its own, wherever the
+    // editing left the figure — inside a paragraph, it still becomes a block.
+    const imageId = tag === 'FIGURE' ? child.getAttribute('data-img') : null;
+    if (imageId && /^[A-Za-z0-9_-]{1,40}$/.test(imageId)) {
+      lines.push({ kind: 'gap' });
+      lines.push({ kind: 'block', text: `[image:${imageId}]` });
+      lines.push({ kind: 'gap' });
       continue;
     }
 
