@@ -67,12 +67,12 @@ body {
 
 .toolbar {
   flex: 0 0 auto;
-  height: var(--toolbar-h);
+  min-height: var(--toolbar-h);
   display: flex;
   align-items: center;
-  gap: 20px;
-  padding: 0 14px;
-  padding-top: env(safe-area-inset-top, 0px);
+  gap: 12px;
+  padding: 7px 12px;
+  padding-top: calc(7px + env(safe-area-inset-top, 0px));
   background: var(--panel);
   border-bottom: 1px solid var(--line);
 }
@@ -103,11 +103,14 @@ body {
   letter-spacing: -0.01em;
 }
 
+/* The controls wrap among themselves and the bar grows taller; the export
+   buttons stay where they are, which is what people reach for without looking. */
 .controls {
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: 7px 11px;
   flex-wrap: wrap;
+  flex: 1 1 auto;
   min-width: 0;
 }
 
@@ -174,7 +177,7 @@ textarea:focus-visible,
 }
 
 .actions {
-  margin-left: auto;
+  flex: 0 0 auto;
   display: flex;
   gap: 8px;
 }
@@ -210,6 +213,11 @@ textarea:focus-visible,
 .btn-primary:hover:not(:disabled) {
   filter: brightness(1.08);
   background: var(--accent);
+}
+
+.btn-small {
+  padding: 5px 10px;
+  font-size: 11px;
 }
 
 /* --- Workspace -------------------------------------------------------- */
@@ -353,21 +361,24 @@ textarea:focus-visible,
   color: var(--accent);
 }
 
-/* --- Narrow windows --------------------------------------------------- */
-
-/* --- New formatting controls -------------------------------------------- */
+/* --- Formatting controls ------------------------------------------------ */
 
 .field-sep {
   width: 1px;
-  height: 20px;
+  height: 18px;
   background: var(--line-strong);
   flex-shrink: 0;
 }
 
-.font-size-controls {
+.font-size-controls,
+.history {
   display: flex;
   align-items: center;
   gap: 2px;
+}
+
+.history .btn-icon {
+  font-size: 14px;
 }
 
 .btn-icon {
@@ -426,12 +437,245 @@ textarea:focus-visible,
   border-radius: 2px;
 }
 
-/* --- Image upload button highlight -------------------------------------- */
+/* --- Image tools ------------------------------------------------------- */
 
-.btn-image-active {
-  background: var(--accent) !important;
-  border-color: var(--accent) !important;
-  color: var(--accent-ink) !important;
+/*
+ * The frame, handles and toolbar for a selected image. They live in the app
+ * document, over the iframe, rather than inside the sheet: nothing that is
+ * only for editing may exist in the DOM that gets printed.
+ *
+ * The container is a zero-size origin pinned to the preview's scroll content,
+ * so its children can be positioned in the same coordinate space as the scaled
+ * sheet and scroll with it.
+ */
+.img-tools {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 0;
+  height: 0;
+  z-index: 5;
+  pointer-events: none;
+}
+
+.img-frame {
+  position: absolute;
+  border: 1.5px solid var(--accent);
+  border-radius: 2px;
+  pointer-events: none;
+}
+
+.img-handle {
+  position: absolute;
+  width: 11px;
+  height: 11px;
+  background: var(--panel);
+  border: 1.5px solid var(--accent);
+  border-radius: 2px;
+  pointer-events: auto;
+  touch-action: none;
+}
+
+.img-handle[data-corner='nw'] {
+  left: -6px;
+  top: -6px;
+  cursor: nwse-resize;
+}
+
+.img-handle[data-corner='ne'] {
+  right: -6px;
+  top: -6px;
+  cursor: nesw-resize;
+}
+
+.img-handle[data-corner='sw'] {
+  left: -6px;
+  bottom: -6px;
+  cursor: nesw-resize;
+}
+
+.img-handle[data-corner='se'] {
+  right: -6px;
+  bottom: -6px;
+  cursor: nwse-resize;
+}
+
+.img-bar {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 4px 5px;
+  background: var(--panel);
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  box-shadow: 0 2px 10px -2px rgb(0 0 0 / 0.28);
+  pointer-events: auto;
+  white-space: nowrap;
+}
+
+.img-btn {
+  font: inherit;
+  font-size: 11px;
+  font-weight: 550;
+  color: var(--ink);
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  padding: 4px 7px;
+  cursor: pointer;
+}
+
+.img-btn:hover {
+  background: var(--panel-sunken);
+}
+
+.img-btn[aria-pressed='true'] {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.img-btn-danger:hover {
+  background: var(--danger);
+  color: #fff;
+}
+
+.img-bar-sep {
+  width: 1px;
+  height: 14px;
+  background: var(--line);
+}
+
+.img-size {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ink-soft);
+  font-variant-numeric: tabular-nums;
+  padding: 0 4px;
+  min-width: 34px;
+  text-align: center;
+}
+
+/* --- Text format bar ---------------------------------------------------- */
+
+/*
+ * Appears over a selection in the page, the way a word processor's does. It
+ * shares the image bar's shell and separators so the two read as one tool.
+ */
+.fmt-tools {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 0;
+  height: 0;
+  z-index: 6;
+  pointer-events: none;
+}
+
+.fmt-bar {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 4px 5px;
+  background: var(--panel);
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  box-shadow: 0 2px 10px -2px rgb(0 0 0 / 0.28);
+  pointer-events: auto;
+  white-space: nowrap;
+}
+
+.fmt-btn {
+  font: inherit;
+  font-size: 11px;
+  font-weight: 550;
+  color: var(--ink);
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  min-width: 24px;
+  padding: 4px 6px;
+  cursor: pointer;
+}
+
+.fmt-btn:hover {
+  background: var(--panel-sunken);
+}
+
+.fmt-btn[aria-pressed='true'] {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.fmt-bold {
+  font-weight: 800;
+}
+
+.fmt-italic {
+  font-style: italic;
+  font-family: Georgia, 'Times New Roman', serif;
+}
+
+/* A colour swatch that shows what it will do: a letter over the colour. */
+.fmt-pick {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 24px;
+  border-radius: 4px;
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.fmt-pick:hover {
+  background: var(--panel-sunken);
+}
+
+.fmt-pick input[type='color'] {
+  position: absolute;
+  left: 3px;
+  right: 3px;
+  bottom: 2px;
+  height: 5px;
+  width: auto;
+  padding: 0;
+  border: 0;
+  border-radius: 1px;
+  background: none;
+  cursor: pointer;
+  appearance: none;
+}
+
+.fmt-pick input[type='color']::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+
+.fmt-pick input[type='color']::-webkit-color-swatch {
+  border: 0;
+  border-radius: 1px;
+}
+
+.fmt-pick-label {
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  margin-bottom: 5px;
+  pointer-events: none;
+}
+
+.fmt-pick-fill {
+  font-weight: 800;
+}
+
+/* While a handle is being dragged the pointer must not become a text cursor
+   the moment it crosses the iframe. */
+body.resizing,
+body.resizing * {
+  cursor: nwse-resize !important;
+  user-select: none;
 }
 
 /* --- Narrow windows --------------------------------------------------- */

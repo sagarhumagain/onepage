@@ -19,6 +19,8 @@
   --doc-rule: #c8ccd4;
   --doc-accent: #14161a;
   --doc-bg: #ffffff;
+  /* The fitter's last lever before type goes below the readable floor. */
+  --doc-image-scale: 1;
 
   position: relative;
   box-sizing: border-box;
@@ -185,55 +187,137 @@
   font-weight: 600;
 }
 
-/* --- Images ----------------------------------------------------------- */
+/* --- Images ------------------------------------------------------------ */
 
+/*
+ * An image is a sized box in the text flow, not a band across the page.
+ *
+ * The width is a percentage of the column it sits in, so it means the same
+ * thing in one column as in three, and it is multiplied by --doc-image-scale,
+ * which the fitter turns down when a page of pictures will not otherwise hold.
+ * Height follows the picture's own proportions, capped so that no single image
+ * can take the whole sheet and push every paragraph off it.
+ */
 .page-body .doc-image {
+  --img-w: 60;
+  display: block;
+  width: calc(var(--img-w) * var(--doc-image-scale) * 1%);
+  max-width: 100%;
   margin: 0.7em 0;
   break-inside: avoid;
 }
 
+.page-body .doc-image[data-align='center'] {
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.page-body .doc-image[data-align='right'] {
+  margin-left: auto;
+  margin-right: 0;
+}
+
+/* Wrapped: the image floats and the text runs beside it. */
+.page-body .doc-image[data-wrap='1'][data-align='left'] {
+  float: left;
+  margin: 0.15em 0.9em 0.45em 0;
+}
+
+.page-body .doc-image[data-wrap='1'][data-align='right'] {
+  float: right;
+  margin: 0.15em 0 0.45em 0.9em;
+}
+
+.page-body .doc-image[data-wrap='1'][data-align='center'] {
+  float: none;
+}
+
 .page-body .doc-image img {
   display: block;
-  max-width: 100%;
+  width: 100%;
   height: auto;
+  /* A tall picture is clamped by height and takes its width back down with
+     it, rather than growing the column until nothing else fits. */
+  max-height: calc((297mm - (var(--doc-margin-mm) * 2mm)) * 0.62 * var(--doc-image-scale));
+  margin: 0 auto;
   border-radius: 0.15em;
 }
 
-.page-body .doc-image[data-align="left"] {
-  text-align: left;
-}
-
-.page-body .doc-image[data-align="center"] {
-  text-align: center;
-}
-
-.page-body .doc-image[data-align="right"] {
-  text-align: right;
-}
-
-.page-body .doc-image[data-align="left"] img,
-.page-body .doc-image[data-align="right"] img {
-  max-width: 65%;
-}
-
-.page-body .doc-image[data-align="center"] img {
-  max-width: 90%;
-}
-
-.page-body .doc-image-caption {
+.page-body .doc-image figcaption {
   font-size: 0.82em;
+  line-height: 1.3;
   color: var(--doc-muted);
   margin-top: 0.25em;
   text-align: center;
 }
 
-/* --- Background with padding ------------------------------------------ */
+/* --- Highlights -------------------------------------------------------- */
 
-.page-body .bg-padded {
-  padding: 0.65em 0.85em;
-  margin: 0.7em 0;
-  border-radius: 0.25em;
+/*
+ * The colour is written inline by the renderer, per mark, so a document can
+ * carry more than one. Padding is horizontal only: a vertical pad would change
+ * the line box and move every line below it.
+ */
+.page-body mark {
+  background: #ffe08a;
+  color: inherit;
+  padding: 0 0.1em;
+  border-radius: 0.12em;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+
+/*
+ * A band: the colour fills the line's whole width, the way a section header
+ * bar does, instead of stopping where the words do.
+ *
+ * The negative margins are what keep banded and unbanded lines aligned down
+ * the same left edge — the padding would otherwise indent every banded line by
+ * its own padding.
+ *
+ * The horizontal inset is measured from the *document* size, not from the
+ * element's own em: a heading is nearly twice body size, and an em-based inset
+ * would make its band bleed twice as far into the margin as a paragraph's. The
+ * bleed is about a millimetre, far inside the narrowest margin the fitter uses.
+ */
+.page-body .doc-band {
+  --band-inset: calc(var(--doc-font-pt) * 0.32pt);
+  padding: 0.14em var(--band-inset);
+  margin-left: calc(-1 * var(--band-inset));
+  margin-right: calc(-1 * var(--band-inset));
+  border-radius: 0.14em;
   break-inside: avoid;
+  print-color-adjust: exact;
+  -webkit-print-color-adjust: exact;
+}
+
+/* A list item or a cell is already inset by its own box; it only needs the
+   colour, or the bullets and the cell borders would slide. */
+.page-body li.doc-band,
+.page-body td.doc-band,
+.page-body th.doc-band {
+  margin-left: 0;
+  margin-right: 0;
+  padding-left: var(--band-inset);
+  padding-right: var(--band-inset);
+}
+
+/* --- Inset background --------------------------------------------------- */
+
+/*
+ * With the inset on, the colour is a panel inside the sheet rather than ink to
+ * the paper's edge — which is what a printer can actually reproduce without a
+ * full-bleed press. The padding lives on the measured box, so the fitter sees
+ * the smaller text area and fits to it.
+ */
+.page.inset {
+  background: #ffffff;
+}
+
+.page.inset .page-body {
+  background: var(--doc-bg);
+  padding: 0.75em 0.95em;
+  border-radius: 0.3em;
 }
 
 /* --- Print ------------------------------------------------------------ */
@@ -276,7 +360,7 @@
   }
 
   .page-body {
-    /* Backgrounds on table headers and code blocks must survive. */
+    /* Backgrounds on table headers, highlights and code blocks must survive. */
     print-color-adjust: exact;
     -webkit-print-color-adjust: exact;
   }

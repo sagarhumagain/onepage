@@ -14,19 +14,24 @@
       </div>
 
       <div class="controls">
+        <div class="history">
+          <button type="button" id="btn-undo" class="btn-icon" title="Undo (Ctrl/Cmd+Z)" disabled>↶</button>
+          <button type="button" id="btn-redo" class="btn-icon" title="Redo (Ctrl/Cmd+Shift+Z)" disabled>↷</button>
+        </div>
+
+        <span class="field-sep" aria-hidden="true"></span>
+
         <label class="field">
-          <span>Margins</span>
-          <select id="margin">
-            <option value="10">Narrow · 10mm</option>
-            <option value="15" selected>Normal · 15mm</option>
-            <option value="20">Wide · 20mm</option>
-            <option value="25">Extra · 25mm</option>
+          <select id="margin" title="Page margins">
+            <option value="10">10 mm</option>
+            <option value="15" selected>15 mm</option>
+            <option value="20">20 mm</option>
+            <option value="25">25 mm</option>
           </select>
         </label>
 
         <label class="field">
-          <span>Typeface</span>
-          <select id="typeface">
+          <select id="typeface" title="Typeface">
             <option value="sans" selected>Calibri</option>
             <option value="arial">Arial</option>
             <option value="serif">Georgia</option>
@@ -54,7 +59,7 @@
         <span class="field-sep" aria-hidden="true"></span>
 
         <label class="field">
-          <span>Font</span>
+          <span>Size</span>
           <div class="font-size-controls">
             <button type="button" id="font-down" class="btn-icon" title="Decrease font size">A−</button>
             <span class="font-size-val" id="font-size-val">11</span>
@@ -63,18 +68,38 @@
         </label>
 
         <label class="field">
-          <span>Background</span>
-          <input type="color" id="bg-color" value="#ffffff" class="color-pick" title="Page background color" />
+          <span>Page</span>
+          <input type="color" id="bg-color" value="#ffffff" class="color-pick" title="Page background colour" />
         </label>
 
-        <label class="field field-check">
+        <label class="field field-check" title="Draw the page colour as an inset panel instead of to the paper's edge">
           <input type="checkbox" id="padding-toggle" />
-          <span>Padding</span>
+          <span>Inset</span>
         </label>
 
         <span class="field-sep" aria-hidden="true"></span>
 
-        <button type="button" id="btn-image" class="btn" title="Add image (or paste one)">Image</button>
+        <button
+          type="button"
+          id="btn-highlight"
+          class="btn btn-small"
+          title="Select words in the page, then highlight them (Ctrl/Cmd+Shift+H). Selecting text also opens a bar over it with colour, size, bold and italic."
+        >
+          Highlight
+        </button>
+
+        <label class="field">
+          <select id="insert" title="Drop a table, a list or a picture in where the cursor is">
+            <option value="" selected>Insert…</option>
+            <option value="table">Table</option>
+            <option value="ul">Bullet list</option>
+            <option value="ol">Numbered list</option>
+            <option value="h2">Heading</option>
+            <option value="quote">Quote</option>
+            <option value="hr">Divider</option>
+            <option value="image">Picture…</option>
+          </select>
+        </label>
         <input type="file" id="image-file" accept="image/*" multiple hidden />
       </div>
 
@@ -94,13 +119,73 @@
         <textarea
           id="source"
           spellcheck="false"
-          placeholder="Paste anything here — a Word document, an email, notes, a report.&#10;&#10;It will be rebuilt as a clean document and scaled to fit exactly one A4 page.&#10;&#10;Tip: paste images directly or click the Image button."
+          placeholder="Paste anything here — a Word document, an email, notes, a report.&#10;&#10;It will be rebuilt as a clean document and scaled to fit exactly one A4 page.&#10;&#10;Or type straight into the page on the right — it writes back here.&#10;Select any words there to colour, highlight or resize them.&#10;Paste an image, or click Image, to drop one in at the cursor; click it in the page to size it, and Esc to let go."
         ></textarea>
       </section>
 
       <section class="pane pane-preview" id="preview">
         <div class="sheet-scaler" id="scaler">
           <iframe id="sheet" title="A4 preview" scrolling="no"></iframe>
+        </div>
+
+        <!--
+          The image editing furniture lives here, in the app document, and never
+          inside the sheet — so a handle or a selection ring cannot reach a
+          printed page or an exported file. It is positioned over the iframe.
+        -->
+        <div class="img-tools" id="img-tools" hidden>
+          <div class="img-frame" id="img-frame">
+            <span class="img-handle" data-corner="nw"></span>
+            <span class="img-handle" data-corner="ne"></span>
+            <span class="img-handle" data-corner="sw"></span>
+            <span class="img-handle" data-corner="se"></span>
+          </div>
+          <div class="img-bar" id="img-bar">
+            <span class="img-size" id="img-size">60%</span>
+            <span class="img-bar-sep" aria-hidden="true"></span>
+            <button type="button" class="img-btn" data-act="left" title="Align left">Left</button>
+            <button type="button" class="img-btn" data-act="center" title="Centre">Centre</button>
+            <button type="button" class="img-btn" data-act="right" title="Align right">Right</button>
+            <span class="img-bar-sep" aria-hidden="true"></span>
+            <button type="button" class="img-btn" data-act="wrap" title="Let the text run beside the image">Wrap</button>
+            <span class="img-bar-sep" aria-hidden="true"></span>
+            <button type="button" class="img-btn img-btn-danger" data-act="remove" title="Remove this image">Remove</button>
+          </div>
+        </div>
+
+        <!--
+          The same idea for words: select any run of text in the page and the
+          bar appears over it. Everything it sets is stored against the text it
+          was applied to, so it survives editing elsewhere in the document.
+        -->
+        <div class="fmt-tools" id="fmt-tools" hidden>
+          <div class="fmt-bar" id="fmt-bar">
+            <button type="button" class="fmt-btn fmt-bold" data-fmt="bold" title="Bold (Ctrl/Cmd+B)">B</button>
+            <button type="button" class="fmt-btn fmt-italic" data-fmt="italic" title="Italic (Ctrl/Cmd+I)">I</button>
+            <span class="img-bar-sep" aria-hidden="true"></span>
+            <button type="button" class="fmt-btn" data-fmt="smaller" title="Smaller">A−</button>
+            <span class="img-size" id="fmt-size">100%</span>
+            <button type="button" class="fmt-btn" data-fmt="bigger" title="Bigger">A+</button>
+            <span class="img-bar-sep" aria-hidden="true"></span>
+            <label class="fmt-pick" title="Text colour">
+              <span class="fmt-pick-label">A</span>
+              <input type="color" id="fmt-fg" value="#b42318" />
+            </label>
+            <label class="fmt-pick" title="Highlight colour">
+              <span class="fmt-pick-label fmt-pick-fill">H</span>
+              <input type="color" id="fmt-bg" value="#ffe08a" />
+            </label>
+            <button
+              type="button"
+              class="fmt-btn"
+              data-fmt="band"
+              title="Fill the whole width of the line, like a section header bar"
+            >
+              Band
+            </button>
+            <span class="img-bar-sep" aria-hidden="true"></span>
+            <button type="button" class="fmt-btn" data-fmt="clear" title="Remove all formatting from the selection">Clear</button>
+          </div>
         </div>
       </section>
     </main>

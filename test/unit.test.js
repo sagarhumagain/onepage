@@ -13,7 +13,8 @@ import path from 'node:path';
 
 import { parse, normalize, wordCount } from '../src/parse.js';
 import { render, escapeHtml } from '../src/render.js';
-import { tokenizeInline, plainText } from '../src/inline.js';
+import { tokenizeInline, tokenizeMarked, plainText } from '../src/inline.js';
+import { applyMarks, collectUnits, formatRange, clearRange, allHave, fmtAt, stepSize } from '../src/marks.js';
 import { SCALE, COLUMN_GAP_MM, TYPEFACES, resolveTypeface, mmToTwip, ptToHalfPoint, ptToTwip, A4_TWIP } from '../src/scale.js';
 
 const SRC = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'src');
@@ -118,6 +119,176 @@ test('ordered list start attribute survives rendering', () => {
   assert.ok(html.includes('<ol start="5">'));
 });
 
+/* --- images ------------------------------------------------------------- */
+
+test('an image reference is a block of its own, with text either side', () => {
+  const b = parse('Report\n\nBefore the picture.\n\n[image:ab12]\n\nAfter the picture.');
+  assert.deepEqual(types(b), ['h1', 'p', 'image', 'p']);
+  assert.equal(b[2].id, 'ab12');
+});
+
+test('an image reference breaks a paragraph and a list rather than joining them', () => {
+  const para = parse('Doc\n\nOne line of prose.\n[image:zz99]\nAnother line of prose.');
+  assert.deepEqual(types(para), ['h1', 'p', 'image', 'p']);
+
+  const list = parse('Doc\n\n- alpha\n[image:zz99]\n- beta');
+  assert.deepEqual(types(list), ['h1', 'ul', 'image', 'ul']);
+});
+
+test('text that merely looks like a reference stays text', () => {
+  assert.deepEqual(types(parse('Doc\n\n[image:has spaces]')), ['h1', 'p']);
+  assert.deepEqual(types(parse('Doc\n\nsee [image:ab12] here')), ['h1', 'p']);
+});
+
+test('an image renders as a sized figure, not a full-width band', () => {
+  const html = render([{ type: 'image', id: 'ab12', src: 'data:image/png;base64,AAA', width: 45, align: 'left', wrap: true }]);
+  assert.ok(html.includes('class="doc-image"'));
+  assert.ok(html.includes('--img-w:45'));
+  assert.ok(html.includes('data-align="left"'));
+  assert.ok(html.includes('data-wrap="1"'));
+});
+
+test('image widths are clamped and sources are restricted to what we produced', () => {
+  const wide = render([{ type: 'image', src: 'data:image/png;base64,AAA', width: 900 }]);
+  assert.ok(wide.includes('--img-w:100'));
+  const narrow = render([{ type: 'image', src: 'data:image/png;base64,AAA', width: 1 }]);
+  assert.ok(narrow.includes('--img-w:10'));
+  // A javascript: or file: src is not rendered at all.
+  assert.equal(render([{ type: 'image', src: 'javascript:alert(1)' }]), '');
+});
+
+/* --- formatting a run of words ------------------------------------------ */
+
+const mark = (sig, text, start, end, fmt) => ({ sig, nth: 0, text, start, end, fmt });
+
+test('units are every markable run of text, in reading order', () => {
+  const blocks = parse('Title\n\nBody text.\n\n- one\n- two\n\n| A | B |\n|---|---|\n| 1 | 2 |');
+  const units = collectUnits(blocks);
+  assert.deepEqual(units.map((u) => u.plain), ['Title', 'Body text.', 'one', 'two', 'A', 'B', '1', '2']);
+  assert.deepEqual(units.map((u) => u.sub), ['text', 'text', 'items.0', 'items.1', 'head.0', 'head.1', 'rows.0.0', 'rows.0.1']);
+});
+
+test('a mark is offsets into the text the reader sees, not into the source', () => {
+  const blocks = parse('Doc\n\nThe **bold** word.');
+  // "The bold word." — colour "bold", which sits behind ** markers.
+  applyMarks(blocks, [mark('The bold word.', 'bold', 4, 8, { bg: '#ffe08a' })]);
+  assert.ok(render(blocks).includes('<mark style="background:#ffe08a"><strong>bold</strong></mark>'));
+});
+
+test('every property a run can carry reaches the page', () => {
+  const blocks = parse('Doc\n\nBody text.');
+  applyMarks(blocks, [mark('Body text.', 'Body', 0, 4, { bg: '#ffe08a', fg: '#b42318', size: 1.35, bold: true, italic: true })]);
+  const html = render(blocks);
+  assert.ok(html.includes('background:#ffe08a'));
+  assert.ok(html.includes('color:#b42318'));
+  assert.ok(html.includes('font-size:1.35em'), 'size must be relative, so the fitter still owns absolute size');
+  assert.ok(html.includes('font-weight:700'));
+  assert.ok(html.includes('font-style:italic'));
+});
+
+test('a run with colour but no background is a span, not a highlight', () => {
+  const blocks = parse('Doc\n\nBody text.');
+  applyMarks(blocks, [mark('Body text.', 'Body', 0, 4, { fg: '#b42318' })]);
+  const html = render(blocks);
+  assert.ok(html.includes('<span style="color:#b42318">Body</span>'), html);
+  assert.ok(!html.includes('<mark'));
+});
+
+test('a mark follows its words when the text around them is edited', () => {
+  const m = mark('Second line.', 'Second', 0, 6, { bg: '#ffe08a' });
+  const blocks = parse('Doc\n\nA new first line.\n\nSecond line, now longer.');
+  applyMarks(blocks, [m]);
+  assert.ok(render(blocks).includes('<mark style="background:#ffe08a">Second</mark>'));
+
+  // And a mark whose words are gone is dropped, never moved onto others.
+  const gone = parse('Doc\n\nNothing of the sort.');
+  applyMarks(gone, [m]);
+  assert.ok(!render(gone).includes('<mark'));
+});
+
+test('formatting merges property by property, and null takes one off', () => {
+  let m = formatRange([], 2, 9, { bg: '#ffe08a' }, 20);
+  m = formatRange(m, 5, 12, { bold: true }, 20);
+  assert.deepEqual(m, [
+    { start: 2, end: 5, fmt: { bg: '#ffe08a' } },
+    { start: 5, end: 9, fmt: { bg: '#ffe08a', bold: true } },
+    { start: 9, end: 12, fmt: { bold: true } },
+  ]);
+
+  assert.ok(allHave(m, 5, 9, 'bold', true));
+  assert.ok(!allHave(m, 2, 9, 'bold', true));
+  assert.equal(fmtAt(m, 6).bg, '#ffe08a');
+
+  const unbolded = formatRange(m, 0, 20, { bold: null }, 20);
+  assert.deepEqual(unbolded, [{ start: 2, end: 9, fmt: { bg: '#ffe08a' } }]);
+  assert.deepEqual(clearRange(m, 0, 20, 20), []);
+});
+
+test('a later colour wins where two marks overlap', () => {
+  const m = formatRange(formatRange([], 0, 6, { bg: '#ffe08a' }, 10), 3, 10, { bg: '#a5d8ff' }, 10);
+  assert.deepEqual(m, [
+    { start: 0, end: 3, fmt: { bg: '#ffe08a' } },
+    { start: 3, end: 10, fmt: { bg: '#a5d8ff' } },
+  ]);
+});
+
+test('size steps walk a ladder rather than compounding', () => {
+  assert.equal(stepSize(1, 1), 1.15);
+  assert.equal(stepSize(1.15, 1), 1.35);
+  assert.equal(stepSize(1, -1), 0.9);
+  assert.equal(stepSize(2.25, 1), 2.25, 'the ladder has a top');
+  assert.equal(stepSize(0.6, -1), 0.6, 'and a bottom');
+});
+
+test('marked tokens are cut at the boundary, keeping their emphasis', () => {
+  const t = tokenizeMarked('a **bold** end', [{ start: 4, end: 8, fmt: { bg: '#fff000' } }]);
+  assert.deepEqual(
+    t.map((x) => [x.text, x.fmt ? x.fmt.bg : null, Boolean(x.bold)]),
+    [['a ', null, false], ['bo', null, true], ['ld', '#fff000', true], [' e', '#fff000', false], ['nd', null, false]]
+  );
+});
+
+test('a band is the line\'s own background, not a highlight around the words', () => {
+  const blocks = parse('Doc\n\nEXECUTIVE SUMMARY\n\nBody text.');
+  applyMarks(blocks, [mark('EXECUTIVE SUMMARY', 'EXECUTIVE SUMMARY', 0, 17, { band: '#ffe08a' })]);
+  const html = render(blocks);
+  assert.ok(html.includes('<h2 class="doc-band" style="background:#ffe08a">EXECUTIVE SUMMARY</h2>'), html);
+  assert.ok(!html.includes('<mark'), 'a band must not also wrap the text');
+});
+
+test('a band and a highlight can sit on the same line', () => {
+  const blocks = parse('Doc\n\nBody text here.');
+  applyMarks(blocks, [
+    mark('Body text here.', 'Body text here.', 0, 15, { band: '#eef2f7' }),
+    { sig: 'Body text here.', nth: 0, text: 'text', start: 5, end: 9, fmt: { bg: '#ffe08a' } },
+  ]);
+  const html = render(blocks);
+  assert.ok(html.includes('class="doc-band" style="background:#eef2f7"'));
+  assert.ok(html.includes('<mark style="background:#ffe08a">text</mark>'), html);
+});
+
+test('two marks on one paragraph both survive re-anchoring', () => {
+  // Each range is stored as its own mark against the same unit, so anchoring
+  // must never treat a unit as claimed by the first mark that lands on it.
+  const blocks = parse('Doc\n\nAlpha beta gamma.');
+  applyMarks(blocks, [
+    { sig: 'Alpha beta gamma.', nth: 0, text: 'Alpha', start: 0, end: 5, fmt: { bg: '#ffe08a' } },
+    { sig: 'Alpha beta gamma.', nth: 0, text: 'gamma', start: 11, end: 16, fmt: { bg: '#a5d8ff' } },
+  ]);
+  const html = render(blocks);
+  assert.ok(html.includes('<mark style="background:#ffe08a">Alpha</mark>'), html);
+  assert.ok(html.includes('<mark style="background:#a5d8ff">gamma</mark>'), html);
+});
+
+test('a colour that is not a plain hex never reaches the style attribute', () => {
+  const blocks = parse('Doc\n\nBody text.');
+  applyMarks(blocks, [mark('Body text.', 'Body', 0, 4, { bg: 'url(evil)', fg: 'expression(x)' })]);
+  const html = render(blocks);
+  assert.ok(!html.includes('evil'));
+  assert.ok(!html.includes('expression'));
+  assert.ok(!html.includes('<mark'));
+});
+
 /* --- unit conversions --------------------------------------------------- */
 
 test('A4 uses the twip literals Word itself writes', () => {
@@ -198,6 +369,25 @@ test('document.css margins match the DOCX scale', () => {
     assert.equal(em(m.bottom), SCALE[key].after, `${key} margin-bottom`);
     assert.equal(em(m.top), SCALE[key].before, `${key} margin-top`);
   }
+});
+
+test('a band keeps banded and unbanded lines on the same left edge', () => {
+  // The negative margins have to cancel the padding exactly, or every banded
+  // line would sit indented from the ones above and below it.
+  const band = rule('.page-body .doc-band');
+  const inset = prop(band, 'padding').replace(/^\S+\s+/, '');
+  assert.equal(prop(band, 'margin-left'), `calc(-1 * ${inset})`);
+  assert.equal(prop(band, 'margin-right'), `calc(-1 * ${inset})`);
+  // Measured from the document size, so every band bleeds the same distance.
+  assert.ok(prop(band, '--band-inset').includes('var(--doc-font-pt)'));
+});
+
+test('the image scale the fitter turns down reaches both the box and its cap', () => {
+  const figure = rule('.page-body .doc-image');
+  assert.ok(prop(figure, 'width').includes('var(--doc-image-scale)'), 'image width must follow the scale');
+  const img = rule('.page-body .doc-image img');
+  assert.ok(prop(img, 'max-height').includes('var(--doc-image-scale)'), 'image height cap must follow the scale');
+  assert.equal(prop(rule('.page'), '--doc-image-scale'), '1');
 });
 
 test('column gap matches the DOCX column spacing', () => {

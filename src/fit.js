@@ -33,11 +33,18 @@ export const DEFAULTS = {
   /** The readable floor. Crossed only to avoid losing content. */
   minPt: 7,
   /**
-   * Absolute last resort. Text this small is barely legible in print, but the
-   * product promise is that content is never silently cut, so the engine keeps
-   * shrinking and the UI says loudly what it had to do.
+   * Text this small is barely legible in print, but the product promise is
+   * that content is never silently cut, so the engine keeps shrinking and the
+   * UI says loudly what it had to do.
    */
   emergencyPt: 2.5,
+  /**
+   * And below even that, rather than give up: one page is the whole product,
+   * so "this does not fit" is not an outcome the engine is allowed to choose
+   * while there is any size left to try. The status bar says how small it had
+   * to go; the sheet is still one sheet.
+   */
+  absoluteMinPt: 0.4,
   /**
    * Growth caps. Above roughly 13-14pt an A4 page stops reading as a document
    * and starts reading as a large-print flyer, so slack is spent on leading
@@ -51,6 +58,14 @@ export const DEFAULTS = {
   maxColumns: 3,
   columns: 'auto',
   fillPage: true,
+  /**
+   * Images do not shrink when type does, so on a page that is mostly picture
+   * the type ladder alone ends at 3pt text beside a full-size photograph.
+   * These are the multipliers the fitter is allowed to apply to every image,
+   * tried in order and only once the readable type sizes are exhausted.
+   */
+  imageSteps: [0.82, 0.66, 0.5, 0.35],
+  hasImages: false,
   /**
    * The height budget is shaved slightly. Print rasterisation rounds
    * differently from screen layout, and a single sub-pixel of overflow
@@ -91,10 +106,18 @@ function overflowBy(body, sentinel, safety, tol) {
   const box = body.getBoundingClientRect();
   const end = sentinel.getBoundingClientRect();
 
-  const heightOver = end.bottom - box.top - box.height * safety;
+  // The measured box can carry padding (the inset background), and padding is
+  // not room the text may use. Measure the content box, not the border box.
+  const cs = body.ownerDocument.defaultView.getComputedStyle(body);
+  const padTop = parseFloat(cs.paddingTop) || 0;
+  const padLeft = parseFloat(cs.paddingLeft) || 0;
+  const innerHeight = box.height - padTop - (parseFloat(cs.paddingBottom) || 0);
+  const innerWidth = box.width - padLeft - (parseFloat(cs.paddingRight) || 0);
+
+  const heightOver = end.bottom - (box.top + padTop) - innerHeight * safety;
   // The sentinel has no width, so its inline position is the position of the
   // column the content ended in.
-  const widthOver = end.right - box.left - box.width - tol;
+  const widthOver = end.right - (box.left + padLeft) - innerWidth - tol;
 
   return Math.max(heightOver, widthOver);
 }
@@ -144,23 +167,34 @@ function buildLadder(cfg) {
   const margin = cfg.marginMm;
   const tighter = Math.min(margin, cfg.tightMarginMm);
   const tightest = Math.min(margin, cfg.minMarginMm);
-  const rung = (cols, lineHeight, marginMm, lo, hi, emergency) => ({
+  const rung = (cols, lineHeight, marginMm, lo, hi, emergency, imageScale) => ({
     cols,
     lineHeight,
     marginMm,
     lo,
     hi,
     emergency: Boolean(emergency),
+    imageScale: imageScale == null ? 1 : imageScale,
   });
+
+  const steps = cfg.hasImages ? cfg.imageSteps : [];
+  const img = (i) => (steps.length ? steps[Math.min(i, steps.length - 1)] : 1);
 
   const ladder = allowed.map((cols) => rung(cols, cfg.lineHeight, margin, cfg.comfortPt, top));
 
+  // With pictures on the page the first thing to give is a little of the
+  // picture: a photograph at 82% still reads, 7pt body text is already a
+  // squint. With no pictures every `img()` is 1 and this is the original
+  // four-rung ladder, unchanged.
+  if (steps.length) ladder.push(rung(widest, cfg.lineHeight, margin, cfg.comfortPt, top, false, img(0)));
+
   // Below the comfortable size: tighten the leading, then reclaim the
   // margins, and only then go under the readable floor.
-  ladder.push(rung(widest, cfg.lineHeight, margin, cfg.minPt, cfg.comfortPt));
-  ladder.push(rung(widest, cfg.tightLineHeight, margin, cfg.minPt, cfg.comfortPt));
-  ladder.push(rung(widest, cfg.tightLineHeight, tighter, cfg.minPt, cfg.comfortPt));
-  ladder.push(rung(widest, cfg.tightLineHeight, tightest, cfg.emergencyPt, cfg.minPt, true));
+  ladder.push(rung(widest, cfg.lineHeight, margin, cfg.minPt, cfg.comfortPt, false, img(0)));
+  ladder.push(rung(widest, cfg.tightLineHeight, margin, cfg.minPt, cfg.comfortPt, false, img(1)));
+  ladder.push(rung(widest, cfg.tightLineHeight, tighter, cfg.minPt, cfg.comfortPt, false, img(1)));
+  ladder.push(rung(widest, cfg.tightLineHeight, tightest, cfg.emergencyPt, cfg.minPt, true, img(2)));
+  ladder.push(rung(widest, cfg.tightLineHeight, tightest, cfg.absoluteMinPt, cfg.emergencyPt, true, img(3)));
   return ladder;
 }
 
@@ -175,20 +209,28 @@ export function createFitter({ page, body }) {
   // affect layout or the position it is being used to report.
   const sentinel = doc.createElement('div');
   sentinel.setAttribute('aria-hidden', 'true');
+  // The page is editable, and nothing the user types may end up inside the
+  // marker the fit is measured against.
+  sentinel.setAttribute('contenteditable', 'false');
+  // `clear: both` is load-bearing: a floated (wrapped) image can hang below
+  // the last line of text, and an uncleared sentinel sits above it and reports
+  // that everything fits while the picture is being cut off.
   sentinel.style.cssText =
-    'display:block;width:0;height:0;margin:0;padding:0;border:0;font-size:0;line-height:0';
+    'display:block;clear:both;width:0;height:0;margin:0;padding:0;border:0;font-size:0;line-height:0';
 
-  const applyState = (fontPt, columns, lineHeight, marginMm) => {
+  const applyState = (fontPt, columns, lineHeight, marginMm, imageScale) => {
     page.style.setProperty('--doc-font-pt', String(round(fontPt, 3)));
     page.style.setProperty('--doc-columns', cssColumns(columns));
     page.style.setProperty('--doc-line-height', String(lineHeight));
     if (marginMm != null) page.style.setProperty('--doc-margin-mm', String(marginMm));
+    page.style.setProperty('--doc-image-scale', String(round(imageScale == null ? 1 : imageScale, 3)));
   };
 
   /**
    * @param {Partial<typeof DEFAULTS>} [options]
    * @returns {Promise<{fontPt:number, columns:number, lineHeight:number, marginMm:number,
-   *   overflow:boolean, belowFloor:boolean, marginsReduced:boolean, iterations:number}>}
+   *   imageScale:number, overflow:boolean, belowFloor:boolean, marginsReduced:boolean,
+   *   imagesShrunk:boolean, iterations:number}>}
    */
   async function fit(options = {}) {
     const fontScale = options.fontScale || 1.0;
@@ -204,7 +246,7 @@ export function createFitter({ page, body }) {
     // One write then one read per probe, in that order, in the same task: the
     // read flushes pending layout, so the number can never be stale.
     const probeFor = (r) => (pt) => {
-      applyState(pt * fontScale, r.cols, r.lineHeight, r.marginMm);
+      applyState(pt * fontScale, r.cols, r.lineHeight, r.marginMm, r.imageScale);
       return overflowBy(body, sentinel, cfg.safety, cfg.tolerancePx);
     };
 
@@ -237,7 +279,7 @@ export function createFitter({ page, body }) {
       if (cfg.fillPage && !r.emergency && r.hi === cfg.fillMaxPt && pt >= r.hi - 0.05) {
         const grown = bisect(
           (lh) => {
-            applyState(pt * fontScale, r.cols, lh, r.marginMm);
+            applyState(pt * fontScale, r.cols, lh, r.marginMm, r.imageScale);
             return overflowBy(body, sentinel, cfg.safety, cfg.tolerancePx);
           },
           r.lineHeight,
@@ -246,7 +288,7 @@ export function createFitter({ page, body }) {
         );
         iterations += grown.iterations;
         lineHeight = grown.fits ? grown.value : r.lineHeight;
-        applyState(pt * fontScale, r.cols, lineHeight, r.marginMm);
+        applyState(pt * fontScale, r.cols, lineHeight, r.marginMm, r.imageScale);
       }
 
       return {
@@ -254,24 +296,28 @@ export function createFitter({ page, body }) {
         columns: r.cols,
         lineHeight: round(lineHeight, 3),
         marginMm: r.marginMm,
+        imageScale: r.imageScale,
         overflow: false,
         belowFloor: r.emergency,
         marginsReduced: r.marginMm < cfg.marginMm,
+        imagesShrunk: r.imageScale < 1,
         iterations,
       };
     }
 
     // Nothing fits, even at the emergency size. Keep the smallest layout and
     // report it, so the UI can say so instead of silently clipping.
-    applyState(last.lo * fontScale, last.cols, last.lineHeight, last.marginMm);
+    applyState(last.lo * fontScale, last.cols, last.lineHeight, last.marginMm, last.imageScale);
     return {
       fontPt: round(last.lo * fontScale, 2),
       columns: last.cols,
       lineHeight: last.lineHeight,
       marginMm: last.marginMm,
+      imageScale: last.imageScale,
       overflow: true,
       belowFloor: true,
       marginsReduced: last.marginMm < cfg.marginMm,
+      imagesShrunk: last.imageScale < 1,
       iterations,
     };
   }

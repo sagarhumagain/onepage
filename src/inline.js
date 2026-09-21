@@ -7,7 +7,7 @@
  * span starts.
  */
 
-/** @typedef {{text:string, bold?:boolean, italic?:boolean, code?:boolean, href?:string}} Token */
+/** @typedef {{text:string, bold?:boolean, italic?:boolean, code?:boolean, href?:string, fmt?:object}} Token */
 
 const PATTERNS = [
   { re: /`([^`\n]+)`/, make: (m) => ({ text: m[1], code: true }) },
@@ -70,3 +70,45 @@ export const plainText = (text) =>
   tokenizeInline(text)
     .map((t) => t.text)
     .join('');
+
+/**
+ * Tokenise, then cut the tokens at the boundaries of formatted runs.
+ *
+ * Mark ranges are offsets into the *plain* text — what the reader sees, with
+ * the inline markers already removed — because that is what a selection in the
+ * preview reports. Cutting here, once, is what keeps a half-highlighted bold
+ * phrase identical in the preview, the PDF and the Word file.
+ *
+ * @param {string} text
+ * @param {{start:number, end:number, fmt:object}[]} [marks]
+ * @returns {Token[]} tokens, each carrying `fmt` when it falls inside a range
+ */
+export function tokenizeMarked(text, marks) {
+  const tokens = tokenizeInline(text);
+  if (!marks || !marks.length) return tokens;
+
+  const out = [];
+  let pos = 0;
+  for (const token of tokens) {
+    const start = pos;
+    const end = pos + token.text.length;
+    pos = end;
+
+    const cuts = new Set([start, end]);
+    for (const m of marks) {
+      if (m.start > start && m.start < end) cuts.add(m.start);
+      if (m.end > start && m.end < end) cuts.add(m.end);
+    }
+
+    const points = [...cuts].sort((a, b) => a - b);
+    for (let i = 0; i < points.length - 1; i++) {
+      const a = points[i];
+      const b = points[i + 1];
+      const hit = marks.find((m) => m.start <= a && m.end >= b);
+      const piece = { ...token, text: token.text.slice(a - start, b - start) };
+      if (hit) piece.fmt = hit.fmt;
+      out.push(piece);
+    }
+  }
+  return out.filter((t) => t.text !== '');
+}
