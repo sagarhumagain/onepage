@@ -141,6 +141,7 @@
             <span class="img-handle" data-corner="se"></span>
           </div>
           <div class="img-bar" id="img-bar">
+            <input type="range" class="img-width" id="img-width" min="10" max="100" step="1" title="Width, as a share of the column" />
             <span class="img-size" id="img-size">60%</span>
             <span class="img-bar-sep" aria-hidden="true"></span>
             <button type="button" class="img-btn" data-act="left" title="Align left">Left</button>
@@ -207,6 +208,11 @@
             >
               Band
             </button>
+            <span class="img-bar-sep" aria-hidden="true"></span>
+            <button type="button" class="fmt-btn" data-fmt="align" data-value="left" title="Align left">L</button>
+            <button type="button" class="fmt-btn" data-fmt="align" data-value="center" title="Centre">C</button>
+            <button type="button" class="fmt-btn" data-fmt="align" data-value="right" title="Align right">R</button>
+            <button type="button" class="fmt-btn" data-fmt="align" data-value="justify" title="Justify">J</button>
             <span class="img-bar-sep" aria-hidden="true"></span>
             <button type="button" class="fmt-btn" data-fmt="clear" title="Remove all formatting from the selection">Clear</button>
           </div>

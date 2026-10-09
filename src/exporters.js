@@ -81,8 +81,8 @@ export async function exportPdf({ html, title }) {
 /**
  * @param {{blocks: any[], layout: object, face: object, title: string}} opts
  */
-export async function exportDocx({ blocks, layout, face, title }) {
-  const blob = await buildDocx({ blocks, layout, face, title });
+export async function exportDocx({ blocks, layout, face, title, footer }) {
+  const blob = await buildDocx({ blocks, layout, face, title, footer });
   const name = suggestName(title);
   const api = bridge();
 

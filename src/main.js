@@ -57,6 +57,7 @@ const els = {
   imgFrame: $('img-frame'),
   imgBar: $('img-bar'),
   imgSize: $('img-size'),
+  imgWidth: $('img-width'),
   fmtTools: $('fmt-tools'),
   fmtBar: $('fmt-bar'),
   fmtSize: $('fmt-size'),
@@ -486,10 +487,37 @@ function insertImageRef(id) {
   ta.setSelectionRange(pos, pos);
 }
 
+/** Longest edge kept for an imported picture: well past 300dpi on A4. */
+const MAX_IMAGE_EDGE = 1600;
+
+/**
+ * A phone photo is several megapixels and nothing on an A4 page can use more
+ * than a fraction of that; kept whole it fills the browser's storage and slows
+ * every fit. A picture with transparency stays a PNG; anything else becomes a
+ * JPEG.
+ */
+async function downscaled(src, type, width, height) {
+  const scale = MAX_IMAGE_EDGE / Math.max(width, height);
+  if (!(scale < 1)) return { src, width, height };
+  const img = new Image();
+  await new Promise((resolve, reject) => {
+    img.onload = resolve;
+    img.onerror = reject;
+    img.src = src;
+  });
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.round(width * scale);
+  canvas.height = Math.round(height * scale);
+  canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+  const out = type === 'image/png' ? canvas.toDataURL('image/png') : canvas.toDataURL('image/jpeg', 0.86);
+  return { src: out, width: canvas.width, height: canvas.height };
+}
+
 async function addImageFromFile(file) {
   if (!file || !file.type.startsWith('image/')) return;
-  const src = await readFileAsDataURL(file);
-  const { width, height } = await getImageDimensions(src);
+  const read = await readFileAsDataURL(file);
+  const natural = await getImageDimensions(read);
+  const { src, width, height } = await downscaled(read, file.type, natural.width, natural.height);
 
   const id = newImageId();
   images[id] = {
@@ -705,6 +733,7 @@ function syncImageTools() {
   placeBar(els.imgBar, box);
 
   els.imgSize.textContent = `${Math.round(rec.width)}%`;
+  els.imgWidth.value = String(Math.round(rec.width));
   for (const btn of els.imgBar.querySelectorAll('.img-btn')) {
     const act = btn.dataset.act;
     if (act === 'left' || act === 'center' || act === 'right') {
@@ -1239,6 +1268,25 @@ async function toggleBand() {
   saveState();
 }
 
+/**
+ * Alignment belongs to the paragraph, so like a band it applies to every unit
+ * the selection touches, whole. Pressing the alignment that is already on
+ * takes it off, back to the element's own.
+ */
+async function toggleAlign(value) {
+  const selection = await needSelection();
+  if (!selection) return;
+  const whole = selection.filter((s) => units[s.index]).map((s) => units[s.index]);
+  const on = whole.every((u) => allHave(u.marks, 0, u.plain.length, 'align', value));
+  for (const unit of whole) {
+    setUnitMarks(unit, formatRange(unit.marks, 0, unit.plain.length, { align: on ? null : value }, unit.plain.length));
+  }
+  keepOffsets = readSelectionOffsets();
+  commit('format');
+  update();
+  saveState();
+}
+
 /** Press once to apply, press again to take it off — as a toolbar should. */
 async function toggleFormat(key, value, opts = {}) {
   const selection = await needSelection();
@@ -1334,6 +1382,12 @@ function syncTextTools() {
         'aria-pressed',
         String(selection.every((s) => units[s.index] && allHave(units[s.index].marks, 0, units[s.index].plain.length, 'band')))
       );
+    } else if (act === 'align') {
+      const value = btn.dataset.value;
+      btn.setAttribute(
+        'aria-pressed',
+        String(selection.every((s) => units[s.index] && allHave(units[s.index].marks, 0, units[s.index].plain.length, 'align', value)))
+      );
     }
   }
 
@@ -1350,6 +1404,7 @@ function onFormatAction(event) {
   if (!act) return;
   if (act === 'bold' || act === 'italic') toggleFormat(act, true);
   else if (act === 'band') toggleBand();
+  else if (act === 'align') toggleAlign(event.target.dataset.value);
   else if (act === 'bigger') stepSelectionSize(1);
   else if (act === 'smaller') stepSelectionSize(-1);
   else if (act === 'clear') clearFormat();
@@ -1702,6 +1757,40 @@ function wire() {
     }
   });
 
+  // A picture dropped anywhere else in the window lands at the source caret,
+  // and a stray file dropped on the window never navigates the app away.
+  const dropImages = async (e) => {
+    if (e.defaultPrevented) return;
+    e.preventDefault();
+    for (const file of e.dataTransfer ? e.dataTransfer.files : []) {
+      if (file.type.startsWith('image/')) await addImageFromFile(file);
+    }
+  };
+  const allowDrop = (e) => {
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+  };
+  window.addEventListener('dragover', allowDrop);
+  window.addEventListener('drop', dropImages);
+  sheetRefs.doc.addEventListener('dragover', allowDrop);
+  sheetRefs.doc.addEventListener('drop', dropImages);
+
+  // The width slider previews as it moves and commits when it is let go.
+  els.imgWidth.addEventListener('input', () => {
+    const fig = figureFor(selectedImage);
+    if (!fig) return;
+    fig.style.setProperty('--img-w', els.imgWidth.value);
+    els.imgSize.textContent = `${els.imgWidth.value}%`;
+    setFrame(paneBox(fig.getBoundingClientRect()));
+  });
+  els.imgWidth.addEventListener('change', () => {
+    if (!selectedImage) return;
+    images[selectedImage].width = clamp(Number(els.imgWidth.value), 10, 100);
+    commit('image');
+    update();
+    saveState();
+  });
+
   els.undo.addEventListener('click', undo);
   els.redo.addEventListener('click', redo);
 
@@ -1744,7 +1833,7 @@ function wire() {
     withBusy(els.docx, async () => {
       await settlePage();
       const { blocks } = currentDoc();
-      const r = await exportDocx({ blocks, layout, face: currentFace(), title: docTitle });
+      const r = await exportDocx({ blocks, layout, face: currentFace(), title: docTitle, footer });
       if (r && r.saved && r.filePath) flash(`Saved ${r.filePath}`);
     })
   );
@@ -1848,7 +1937,7 @@ function exposeForTests() {
     docxBytes: async () => {
       const { blocks } = currentDoc();
       const { buildDocx } = await import('./to-docx.js');
-      const blob = await buildDocx({ blocks, layout, face: currentFace(), title: docTitle });
+      const blob = await buildDocx({ blocks, layout, face: currentFace(), title: docTitle, footer });
       return Array.from(new Uint8Array(await blob.arrayBuffer()));
     },
   };

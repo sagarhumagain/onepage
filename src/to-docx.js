@@ -23,6 +23,7 @@ import {
   BorderStyle,
   Document,
   ExternalHyperlink,
+  Footer,
   HorizontalPositionAlign,
   HorizontalPositionRelativeFrom,
   ImageRun,
@@ -47,6 +48,7 @@ import { plainText, tokenizeMarked } from './inline.js';
 import { LIST_GLYPHS } from './parse.js';
 import { clampWidth } from './render.js';
 import { A4_TWIP, COLUMN_GAP_MM, SCALE, mmToTwip, ptToHalfPoint, ptToTwip } from './scale.js';
+import { FOOTER_GAP_MM, FOOTER_MM, hasFooter } from './footer.js';
 
 /**
  * Word's line breaking never matches Chromium's exactly — kerning,
@@ -208,7 +210,7 @@ function metrics(key, basePt, docLineHeight) {
  * @param {string} [opts.title]
  * @returns {Promise<Blob>}
  */
-export async function buildDocx({ blocks, layout, face, title }) {
+export async function buildDocx({ blocks, layout, face, title, footer }) {
   const basePt = layout.fontPt * WORD_REFLOW_SLACK;
   const docLineHeight = layout.lineHeight;
   const imageScale = layout.imageScale == null ? 1 : layout.imageScale;
@@ -579,6 +581,49 @@ export async function buildDocx({ blocks, layout, face, title }) {
 
   if (!children.length) children.push(new Paragraph({ children: [] }));
 
+  /**
+   * The footer's two pictures in a Word footer, at the strip's height: the
+   * left one at the left margin, the right one anchored to the right margin.
+   * The body's bottom margin grows by the strip and its gap, which is exactly
+   * the room the preview takes off the text area.
+   */
+  const footerPictures = () => {
+    if (!hasFooter(footer)) return null;
+    const heightPx = (FOOTER_MM / 25.4) * 96;
+    const run = (img, side) => {
+      const src = String((img && img.src) || '');
+      if (!src.startsWith('data:image/')) return null;
+      let data;
+      try {
+        data = Uint8Array.from(atob(src.slice(src.indexOf(',') + 1)), (c) => c.charCodeAt(0));
+      } catch {
+        return null;
+      }
+      const ratio = img.w > 0 && img.h > 0 ? img.w / img.h : 1;
+      const width = Math.min(heightPx * ratio, px(usableWidth) / 2);
+      const height = width / ratio;
+      return new ImageRun({
+        data,
+        transformation: { width: Math.round(width), height: Math.round(height) },
+        altText: { title: img.alt || 'Logo', description: img.alt || 'Logo', name: img.alt || 'logo' },
+        floating:
+          side === 'right'
+            ? {
+                horizontalPosition: { relative: HorizontalPositionRelativeFrom.MARGIN, align: HorizontalPositionAlign.RIGHT },
+                verticalPosition: { relative: VerticalPositionRelativeFrom.PARAGRAPH, offset: 0 },
+                wrap: { type: TextWrappingType.SQUARE, side: TextWrappingSide.BOTH_SIDES },
+              }
+            : undefined,
+      });
+    };
+    const runs = [run(footer.right, 'right'), run(footer.left, 'left')].filter(Boolean);
+    if (!runs.length) return null;
+    return new Footer({ children: [new Paragraph({ children: runs, spacing: { before: 0, after: 0 } })] });
+  };
+  const px = (twips) => twips / TWIPS_PER_PX;
+  const pageFooter = footerPictures();
+  const footerTwip = pageFooter ? mmToTwip(FOOTER_MM + FOOTER_GAP_MM) : 0;
+
   const doc = new Document({
     title: title || 'Document',
     creator: 'OnePage',
@@ -615,15 +660,16 @@ export async function buildDocx({ blocks, layout, face, title }) {
             margin: {
               top: marginTwip,
               right: marginTwip,
-              bottom: marginTwip,
+              bottom: marginTwip + footerTwip,
               left: marginTwip,
               header: 0,
-              footer: 0,
+              footer: pageFooter ? marginTwip : 0,
               gutter: 0,
             },
           },
           column: columns > 1 ? { count: columns, space: gapTwip, separate: false } : undefined,
         },
+        footers: pageFooter ? { default: pageFooter } : undefined,
         children,
       },
     ],

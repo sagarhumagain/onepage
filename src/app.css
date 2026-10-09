@@ -721,3 +721,9 @@ body.resizing * {
     flex: 1 1 0;
   }
 }
+
+/* The image width slider, inside the image toolbar. */
+.img-width {
+  width: 7rem;
+  accent-color: #0f766e;
+}
