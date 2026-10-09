@@ -16,11 +16,22 @@ Runs on macOS and Windows.
 paste  ->  parse  ->  render  ->  fit  ->  print / PDF / Word
 ```
 
-**Paste** keeps structure, not styling. When the clipboard carries HTML (Word,
-Google Docs, a browser) OnePage walks it for headings, lists, tables and
-emphasis, and throws away every font, colour and `mso-` artefact. The result is
-plain text you can edit in the left pane, using conventions the parser already
-understands (`#`, `-`, `1.`, `>`, `|` tables, `**bold**`).
+**Paste** keeps structure, and from Word it keeps the look too. When the
+clipboard carries HTML from a browser, OnePage walks it for headings, lists,
+tables, links and emphasis, and throws away every font and colour: a web
+page's CSS is the site's design, not the author's. The result is plain text
+you can edit in the left pane, using conventions the parser already
+understands (`#`, `-`, `1.`, `>`, `|` tables, `**bold**`, `[text](url)`).
+
+From Word the formatting *is* the author's, so it is kept: a shaded title bar
+drawn as a shape, a "Key facts" text box, ticks nested under a bullet, a table
+with a shaded label column and lists inside its cells, column widths, black
+rules, sizes, colours, alignment and the logos. The text still arrives as
+editable source; everything a reader would call styling arrives as marks — the
+same content-anchored formatting the format bar writes — so a pasted fact sheet
+looks like the one that was copied and can be edited like anything typed. A
+document pasted into an empty page also brings its typeface and its single
+column with it.
 
 **Fit** is a binary search, not a zoom. Every size in `document.css` derives
 from one custom property, `--doc-font-pt`, so a single number rescales the whole
@@ -128,6 +139,7 @@ exports a real PDF and measures it with `pdfinfo`:
 npm run build && npx vite &            # dev server on :5183
 ONEPAGE_DEV_URL=http://localhost:5183 npx electron test/e2e.js
 ONEPAGE_DEV_URL=http://localhost:5183 npx electron test/interaction.js
+ONEPAGE_DEV_URL=http://localhost:5183 npx electron test/word-paste.js
 npx electron test/smoke-prod.js        # same checks against the built bundle
 ```
 
@@ -140,6 +152,11 @@ just typed, undoes and redoes, inserts a table from the header and reads it
 back out of the source, and then checks that a full page of text plus a large
 picture is still a single A4 sheet — with the .docx unzipped and its XML
 inspected for the image size, the text wrap and the shading.
+
+`word-paste.js` puts Word-shaped HTML and RTF on the system clipboard, pastes
+it into the app — into the source pane and into the page — and checks the
+document, the page, the PDF and the .docx that come out. It borrows the
+clipboard and puts back the text that was on it.
 
 Current results — every case one page, at true A4, with selectable text and no
 content lost:
@@ -163,7 +180,10 @@ unbreakable url          13.24    1  1.38       1     2493
 
 | File | Responsibility |
 |------|----------------|
-| `src/parse.js` | text → document blocks (headings, lists, tables, quotes, images) |
+| `src/parse.js` | text → document blocks (headings, nested lists, tables, quotes, images) |
+| `src/clipboard.js` | clipboard HTML → source text; Word's formatting → marks |
+| `src/word.js` | Word's clipboard HTML made ordinary: VML shapes, list paragraphs, class styles |
+| `src/rtf.js` | the pictures in an RTF clipboard flavour |
 | `src/inline.js` | inline tokens, shared by the HTML and Word renderers |
 | `src/marks.js` | formatting on a run of words, anchored to the words |
 | `src/render.js` | blocks → HTML, escaping everything on the way in |
@@ -257,6 +277,23 @@ same bytes.
 **`docx`'s millimetre helper truncates.** `convertMillimetersToTwip(210)`
 returns 11905, not the 11906 Word itself writes; on a borderline layout that one
 twip is a second page. The A4 literals are hard-coded.
+
+**Half of a Word document is in comments.** Text boxes, shapes and floating
+pictures arrive as VML inside `<!--[if gte vml 1]>` conditional comments, so
+to a browser a title bar or a "Key facts" box simply is not there; the
+fallback Word offers instead is a picture of the box at a file path no page
+can read. word.js parses the comments and puts their content back into the
+document, ordered top to bottom the way a reader meets it.
+
+**Word's pictures are only in the RTF.** The HTML flavour points at temporary
+files in Office's own sandboxed container. The RTF flavour Word writes beside
+it carries the same pictures as hex PNG, in the same order — and a WMF copy of
+each for old readers, which is skipped.
+
+**A line break is a character, not an element.** A `<br>` has no text, so
+every offset after one — which is what a selection, a mark and the caret are
+measured in — would be one short. A hard break is a preserved newline in a
+span of its own, and counts as the one character it is in the source.
 
 **Word half-points round down, deliberately.** Rounding to nearest turns a
 solved 9.76pt into 10.0pt — 2.5% larger than the size measured to fit, spending
