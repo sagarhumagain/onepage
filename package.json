@@ -1,7 +1,7 @@
 {
   "name": "onepage",
   "productName": "OnePage",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "Paste anything, fit it to exactly one A4 page, then print or export to PDF and Word.",
   "private": true,
   "type": "module",

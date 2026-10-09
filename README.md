@@ -23,6 +23,14 @@ page's CSS is the site's design, not the author's. The result is plain text
 you can edit in the left pane, using conventions the parser already
 understands (`#`, `-`, `1.`, `>`, `|` tables, `**bold**`, `[text](url)`).
 
+Tables keep their merged cells and the tables inside their cells. A merged
+cell is written where it starts, with `<<` in each cell it covers to the right
+and `^^` in each cell it covers below — so `| Total | << |` is one cell two
+columns wide. A table inside a cell is written in that cell, one line per
+`<br>`, with its own pipes escaped (`\|`); a line break inside one of *its*
+cells goes one backslash deeper, `<br\>`. Both come out of a paste, and out of
+typing in the page, without having to be written by hand.
+
 From Word the formatting *is* the author's, so it is kept: a shaded title bar
 drawn as a shape, a "Key facts" text box, ticks nested under a bullet, a table
 with a shaded label column and lists inside its cells, column widths, black

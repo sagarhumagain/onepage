@@ -235,16 +235,21 @@ export function render(blocks, opts = {}) {
    * band is the cell's shading and colours the whole cell, as Word draws it.
    */
   const cell = (b, sub, value, header) => {
-    const tag = header ? 'th' : 'td';
+    if (b.covered && b.covered[sub]) return '';
+    const span = b.spans && b.spans[sub];
+    const tag = `${header ? 'th' : 'td'}${span && span.cols > 1 ? ` colspan="${span.cols}"` : ''}${
+      span && span.rows > 1 ? ` rowspan="${span.rows}"` : ''
+    }`;
+    const close = header ? 'th' : 'td';
     const inner = b.cells && b.cells[sub];
-    if (!inner) return `<${tag}${attrs(b, sub, value)}>${text(b, sub, value)}</${tag}>`;
+    if (!inner) return `<${tag}${attrs(b, sub, value)}>${text(b, sub, value)}</${close}>`;
 
     const shared = sharedCellProps(inner);
     const decls = [];
     if (shared.band) decls.push(`background:${shared.band}`);
     if (shared.valign) decls.push(`vertical-align:${shared.valign}`);
     const style = decls.length ? ` style="${decls.join(';')}"` : '';
-    return `<${tag} class="doc-cell"${style}>${render(inner, { ...opts, shaded: Boolean(shared.band) })}</${tag}>`;
+    return `<${tag} class="doc-cell"${style}>${render(inner, { ...opts, shaded: Boolean(shared.band) })}</${close}>`;
   };
 
   for (const b of blocks) {

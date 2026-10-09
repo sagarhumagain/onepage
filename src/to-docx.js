@@ -409,9 +409,12 @@ export async function buildDocx({ blocks, layout, face, title, footer }) {
     const mm = mOf('table');
     const tableScale = SCALE.table.size;
     const colCount = Math.max(1, (b.head && b.head.length) || (b.rows[0] || []).length);
+    // A table inside a cell fits inside the cell's own padding, which Word
+    // keeps at its default of 0.08in either side.
+    const tableWidth = scope.inCell ? Math.max(colCount * 360, scope.width - 2 * 115) : scope.width;
     const total = b.widths && b.widths.length === colCount ? b.widths.reduce((a, w) => a + w, 0) : 0;
     const widths = Array.from({ length: colCount }, (_, j) =>
-      Math.floor(total ? (scope.width * b.widths[j]) / total : scope.width / colCount)
+      Math.floor(total ? (tableWidth * b.widths[j]) / total : tableWidth / colCount)
     );
     const ruleColor = b.border ? fillOf(b.border) : RULE_COLOR;
     const ruleSize = b.border ? 6 : 4;
@@ -423,6 +426,8 @@ export async function buildDocx({ blocks, layout, face, title, footer }) {
     };
 
     const cell = (sub, text, header, j) => {
+      const span = (b.spans && b.spans[sub]) || { rows: 1, cols: 1 };
+      const width = widths.slice(j, j + span.cols).reduce((a, w) => a + w, 0);
       const inner = b.cells && b.cells[sub];
       let children;
       let band;
@@ -431,7 +436,7 @@ export async function buildDocx({ blocks, layout, face, title, footer }) {
         const shared = sharedCell(inner);
         band = shared.band;
         valign = shared.valign;
-        children = blockChildren(inner, { scale: tableScale, width: widths[j], inCell: true, shaded: Boolean(band) });
+        children = blockChildren(inner, { scale: tableScale, width, inCell: true, shaded: Boolean(band) });
       } else {
         const marks = marksOf(b, sub);
         band = unitProp(marks, 'band');
@@ -439,7 +444,11 @@ export async function buildDocx({ blocks, layout, face, title, footer }) {
         children = [para('p', text, { scale: tableScale, before: 0, after: 0, bold: header, marks, band: false, alignment: AlignmentType.LEFT })];
       }
       return new TableCell({
-        width: { size: widths[j], type: WidthType.DXA },
+        width: { size: width, type: WidthType.DXA },
+        // Word draws a merge as one cell that spans the grid; the cells a row
+        // span runs down over are written by the library as continuations.
+        columnSpan: span.cols > 1 ? span.cols : undefined,
+        rowSpan: span.rows > 1 ? span.rows : undefined,
         borders,
         verticalAlign: VALIGN[valign],
         shading: band ? { type: ShadingType.CLEAR, color: 'auto', fill: fillOf(band) } : header ? { fill: 'F4F5F7' } : undefined,
@@ -447,20 +456,24 @@ export async function buildDocx({ blocks, layout, face, title, footer }) {
       });
     };
 
+    /** A row's cells, less the ones a merge runs over. */
+    const rowCells = (texts, prefix, header) =>
+      Array.from({ length: colCount }, (_, j) => texts[j] || '').flatMap((c, j) =>
+        b.covered && b.covered[`${prefix}${j}`] ? [] : [cell(`${prefix}${j}`, c, header, j)]
+      );
+
     const rows = [];
     if (!b.headless && b.head && b.head.length) {
-      rows.push(new TableRow({ tableHeader: true, children: b.head.map((c, j) => cell(`head.${j}`, c, true, j)) }));
+      rows.push(new TableRow({ tableHeader: true, children: rowCells(b.head, 'head.', true) }));
     }
     (b.rows || []).forEach((r, ri) => {
-      const cells = r.slice(0, colCount);
-      while (cells.length < colCount) cells.push('');
-      rows.push(new TableRow({ children: cells.map((c, j) => cell(`rows.${ri}.${j}`, c, false, j)) }));
+      rows.push(new TableRow({ children: rowCells(r, `rows.${ri}.`, false) }));
     });
     if (!rows.length) return [];
     return [
       new Table({
         rows,
-        width: { size: scope.width, type: WidthType.DXA },
+        width: { size: tableWidth, type: WidthType.DXA },
         // Fixed layout stops Word re-autofitting the columns, which
         // would change row heights and the total page height with them.
         layout: TableLayoutType.FIXED,

@@ -23,8 +23,16 @@
  * `cells` holds the parsed content of any cell that is more than one line of
  * text, keyed by its address ('head.1', 'rows.2.0'). `headless` is a table
  * whose header row is empty: the convention for a table that has none.
+ *
+ * `spans` and `covered` describe merged cells. A merged cell is written as the
+ * cell where it starts — its *anchor* — and `<<` or `^^` in each cell it runs
+ * over: `<<` joins a cell to the one on its left, `^^` to the one above. The
+ * anchor's address maps to how many rows and columns it covers in `spans`,
+ * and each cell it runs over maps to the anchor in `covered`; those cells are
+ * not drawn.
  * @typedef {{type:'table', head:string[], rows:string[][], headless?:boolean,
- *   widths?:number[], border?:string, cells?:Object<string, Block[]>}} TableBlock
+ *   widths?:number[], border?:string, cells?:Object<string, Block[]>,
+ *   spans?:Object<string, {rows:number, cols:number}>, covered?:Object<string, string>}} TableBlock
  */
 /** @typedef {{type:'image', id:string}} ImageRef */
 /** @typedef {TextBlock|ListBlock|RuleBlock|TableBlock|ImageRef} Block */
@@ -95,8 +103,20 @@ const LIST_LINE = new RegExp('^([ \\t]*)(?:([-*+' + BULLET_CHARS + '])|(\\d{1,3}
 const HARD_BREAK = /\\$/;
 /** Attributes for the block above, kramdown style: `{: widths="20 80"}`. */
 const ATTRS = /^[ \t]*\{:\s*([^}]*)\}[ \t]*$/;
-/** Inside a table cell, `<br>` is the line separator — as it is in GitHub's tables. */
+/**
+ * Inside a table cell, `<br>` is the line separator — as it is in GitHub's
+ * tables. A table inside a cell has line breaks of its own; those are written
+ * one backslash deeper, `<br\>`, so they stay inside the inner table's cell.
+ */
 const CELL_BREAK = /<br\s*\/?>/gi;
+const NESTED_BREAK = /<br\\(\\*)>/g;
+
+/** A cell's text as the lines of the small document it holds. */
+const cellLines = (text) => text.replace(CELL_BREAK, '\n').replace(NESTED_BREAK, '<br$1>');
+
+/** A cell that is part of the merged cell to its left, or the one above. */
+export const MERGE_LEFT = '<<';
+export const MERGE_UP = '^^';
 const HEX_COLOR = /^#[0-9a-f]{6}$/i;
 const ATX = /^(#{1,6})\s+(.*?)\s*#*$/;
 const RULE = /^[ \t]*([-*_=])\1{2,}[ \t]*$/;
@@ -305,8 +325,9 @@ export function parse(raw, opts = {}) {
       continue;
     }
 
-    // Markdown-ish table: header row followed by a divider row.
-    if (!cell && line.includes('|') && i + 1 < lines.length && TABLE_DIVIDER.test(lines[i + 1])) {
+    // Markdown-ish table: header row followed by a divider row. A cell can
+    // hold one too: a table inside a table.
+    if (line.includes('|') && i + 1 < lines.length && TABLE_DIVIDER.test(lines[i + 1])) {
       const head = splitRow(line);
       i += 2;
       const rows = [];
@@ -470,6 +491,46 @@ const FULL_BOLD = /^\*\*([\s\S]+)\*\*$/;
 const isRichCell = (text) => /<br\s*\/?>/i.test(text);
 
 /**
+ * Merged cells, from the `<<` and `^^` written in the cells they cover.
+ *
+ * Each cell that is not itself a marker is an anchor. It runs right over the
+ * `<<` cells after it, then down over each row below whose cells under it are
+ * all `^^` (or `<<`, past the first column) — always a rectangle, the only
+ * shape a table cell can have. A header cell does not run down into the body:
+ * HTML and Word both keep a table's header rows apart. A marker that no
+ * anchor reaches stays the text it is, so nothing typed is lost.
+ */
+function mergeCells(b) {
+  const grid = [];
+  if (!b.headless) grid.push(b.head.map((c, j) => ({ sub: `head.${j}`, text: c.trim() })));
+  b.rows.forEach((r, ri) => grid.push(r.map((c, j) => ({ sub: `rows.${ri}.${j}`, text: c.trim() }))));
+
+  const covered = {};
+  const spans = {};
+  const free = (r, c, ...markers) => grid[r] && grid[r][c] && !covered[grid[r][c].sub] && markers.includes(grid[r][c].text);
+  grid.forEach((row, r) =>
+    row.forEach((at, c) => {
+      if (covered[at.sub] || at.text === MERGE_LEFT || at.text === MERGE_UP) return;
+      let cols = 1;
+      while (free(r, c + cols, MERGE_LEFT)) cols++;
+      let rows = 1;
+      const isHead = !b.headless && r === 0;
+      const rowFits = (rr) =>
+        Array.from({ length: cols }, (_, k) => (k ? free(rr, c + k, MERGE_UP, MERGE_LEFT) : free(rr, c, MERGE_UP))).every(Boolean);
+      while (!isHead && r + rows < grid.length && rowFits(r + rows)) rows++;
+      if (cols === 1 && rows === 1) return;
+      spans[at.sub] = { rows, cols };
+      for (let i = 0; i < rows; i++)
+        for (let k = 0; k < cols; k++) if (i || k) covered[grid[r + i][c + k].sub] = at.sub;
+    })
+  );
+  if (Object.keys(spans).length) {
+    b.spans = spans;
+    b.covered = covered;
+  }
+}
+
+/**
  * Remove emphasis that the surrounding element already provides.
  *
  * Word has no heading styles in its clipboard output — a title arrives as an
@@ -494,10 +555,12 @@ function tidy(blocks) {
       if (b.widths && b.widths.length !== cols) delete b.widths;
       if (cols && b.head.every((c) => !c.trim())) b.headless = true;
 
+      mergeCells(b);
+
       // A cell with more than a line in it is a small document of its own.
       const cells = {};
       const visit = (text, address) => {
-        if (isRichCell(text)) cells[address] = parse(text.replace(CELL_BREAK, '\n'), { cell: true });
+        if (isRichCell(text) && !(b.covered && b.covered[address])) cells[address] = parse(cellLines(text), { cell: true });
       };
       if (!b.headless) b.head.forEach((c, j) => visit(c, `head.${j}`));
       b.rows.forEach((r, ri) => r.forEach((c, j) => visit(c, `rows.${ri}.${j}`)));
