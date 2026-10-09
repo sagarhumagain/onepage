@@ -16,10 +16,13 @@ import { parse, wordCount, IMAGE_REF } from './parse.js';
 import { render } from './render.js';
 import { createFitter, A4 } from './fit.js';
 import { mountSheet, standaloneHtml } from './sheet.js';
-import { textFromPaste, htmlToText } from './clipboard.js';
+import { textFromPaste, htmlToText, richFromPaste, marksFromRecords } from './clipboard.js';
 import { TYPEFACES, resolveTypeface } from './scale.js';
 import { exportDocx, exportPdf, printSheet } from './exporters.js';
-import { applyMarks, storedMark, formatRange, clearRange, allHave, fmtAt, stepSize } from './marks.js';
+import { applyMarks, collectUnits, storedMark, formatRange, clearRange, allHave, fmtAt, stepSize } from './marks.js';
+import { footerHtml, hasFooter, restoreFooter, serializeFooter } from './footer.js';
+import defaultLeft from './assets/footer-left.png?inline';
+import defaultRight from './assets/footer-right.png?inline';
 
 const $ = (id) => document.getElementById(id);
 
@@ -54,11 +57,17 @@ const els = {
   imgFrame: $('img-frame'),
   imgBar: $('img-bar'),
   imgSize: $('img-size'),
+  imgWidth: $('img-width'),
   fmtTools: $('fmt-tools'),
   fmtBar: $('fmt-bar'),
   fmtSize: $('fmt-size'),
   fmtFg: $('fmt-fg'),
   fmtBg: $('fmt-bg'),
+  fmtPad: $('fmt-pad'),
+  footTools: $('foot-tools'),
+  footFrame: $('foot-frame'),
+  footBar: $('foot-bar'),
+  footerFile: $('footer-file'),
 };
 
 const STORE_KEY = 'onepage.state.v3';
@@ -80,10 +89,28 @@ let fontScale = 1.0;
 let bgColor = '#ffffff';
 let inset = false;
 let hlColor = '#ffe08a';
+/** Padding around a highlight, in tenths of an em; 1 is the look it always had. */
+let hlPad = 1;
+/** The default padding is the stylesheet's, so it is stored as no padding at all. */
+const padMark = (pad) => (pad === 1 ? null : pad);
 let fgColor = '#b42318';
 
 /** id -> {src, alt, w, h, width, align, wrap}. Positions live in the text. */
 let images = {};
+/**
+ * The two logos at the foot of every page; see footer.js. Until something
+ * else is chosen they are the bundled defaults, which are saved as the word
+ * "default" rather than as their bytes.
+ */
+const DEFAULT_FOOTER = {
+  left: { src: defaultLeft, alt: 'Government of Nepal', w: 210, h: 212, preset: true },
+  right: { src: defaultRight, alt: 'World Health Organization Nepal', w: 417, h: 214, preset: true },
+};
+let footer = { ...DEFAULT_FOOTER };
+/** The footer slot being edited, 'left' or 'right', or null. */
+let selectedSlot = null;
+/** The slot a picked file goes into. */
+let footerTarget = null;
 /** Content-anchored run formatting; see marks.js. */
 let marks = [];
 
@@ -156,9 +183,11 @@ function saveState() {
         bgColor,
         inset,
         hlColor,
+        hlPad,
         fgColor,
         images: kept,
         marks,
+        footer: serializeFooter(footer),
       })
     );
   } catch {
@@ -191,12 +220,15 @@ function restoreState() {
   if (typeof s.bgColor === 'string') bgColor = s.bgColor;
   if (typeof s.inset === 'boolean') inset = s.inset;
   if (typeof s.hlColor === 'string') hlColor = s.hlColor;
+  if (typeof s.hlPad === 'number') hlPad = s.hlPad;
   if (typeof s.fgColor === 'string') fgColor = s.fgColor;
   if (s.images && typeof s.images === 'object') images = s.images;
   if (Array.isArray(s.marks)) marks = s.marks;
+  footer = restoreFooter(s.footer, DEFAULT_FOOTER);
 
   els.bgColor.value = bgColor;
   els.fmtBg.value = hlColor;
+  els.fmtPad.value = String(hlPad);
   els.fmtFg.value = fgColor;
   els.insetToggle.checked = inset;
 }
@@ -330,6 +362,7 @@ async function update(opts = {}) {
     sheetRefs.page.style.setProperty('--doc-font-family', face.css);
     sheetRefs.page.style.setProperty('--doc-bg', bgColor);
     sheetRefs.page.classList.toggle('inset', inset);
+    renderFooter();
 
     const words = wordCount(els.source.value);
     const hasImages = Boolean(sheetRefs.body.querySelector('.doc-image'));
@@ -357,6 +390,7 @@ async function update(opts = {}) {
     running = false;
     restoreOffsets();
     restoreImageSelection();
+    syncFooterTools();
     const next = queued;
     queued = null;
     if (next) update(next);
@@ -453,10 +487,37 @@ function insertImageRef(id) {
   ta.setSelectionRange(pos, pos);
 }
 
+/** Longest edge kept for an imported picture: well past 300dpi on A4. */
+const MAX_IMAGE_EDGE = 1600;
+
+/**
+ * A phone photo is several megapixels and nothing on an A4 page can use more
+ * than a fraction of that; kept whole it fills the browser's storage and slows
+ * every fit. A picture with transparency stays a PNG; anything else becomes a
+ * JPEG.
+ */
+async function downscaled(src, type, width, height) {
+  const scale = MAX_IMAGE_EDGE / Math.max(width, height);
+  if (!(scale < 1)) return { src, width, height };
+  const img = new Image();
+  await new Promise((resolve, reject) => {
+    img.onload = resolve;
+    img.onerror = reject;
+    img.src = src;
+  });
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.round(width * scale);
+  canvas.height = Math.round(height * scale);
+  canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+  const out = type === 'image/png' ? canvas.toDataURL('image/png') : canvas.toDataURL('image/jpeg', 0.86);
+  return { src: out, width: canvas.width, height: canvas.height };
+}
+
 async function addImageFromFile(file) {
   if (!file || !file.type.startsWith('image/')) return;
-  const src = await readFileAsDataURL(file);
-  const { width, height } = await getImageDimensions(src);
+  const read = await readFileAsDataURL(file);
+  const natural = await getImageDimensions(read);
+  const { src, width, height } = await downscaled(read, file.type, natural.width, natural.height);
 
   const id = newImageId();
   images[id] = {
@@ -509,6 +570,84 @@ function removeImage(id) {
   saveState();
 }
 
+/* --- The footer ---------------------------------------------------------- */
+
+let footerShown = null;
+
+/**
+ * Draw the footer into the page. Its pictures are only replaced when they
+ * change: a re-fit on every keystroke must not make the logos flash.
+ */
+function renderFooter() {
+  const html = footerHtml(footer);
+  if (html !== footerShown) {
+    sheetRefs.footer.innerHTML = html;
+    footerShown = html;
+  }
+  if (hasFooter(footer)) sheetRefs.page.setAttribute('data-footer', '1');
+  else sheetRefs.page.removeAttribute('data-footer');
+  const slot = selectedSlot && sheetRefs.footer.querySelector(`[data-slot="${selectedSlot}"]`);
+  for (const el of sheetRefs.footer.querySelectorAll('.footer-slot')) el.toggleAttribute('data-selected', el === slot);
+  if (slot) slot.setAttribute('data-selected', '1');
+}
+
+function selectFooterSlot(slot) {
+  selectedSlot = slot && footer[slot] ? slot : null;
+  if (selectedSlot) {
+    selectImage(null);
+    const sel = sheetRefs.win.getSelection();
+    if (sel) sel.removeAllRanges();
+    pendingSelection = null;
+  }
+  renderFooter();
+  syncTools();
+}
+
+function syncFooterTools() {
+  const el = selectedSlot && sheetRefs ? sheetRefs.footer.querySelector(`[data-slot="${selectedSlot}"] img`) : null;
+  if (!el) {
+    els.footTools.hidden = true;
+    return;
+  }
+  els.footTools.hidden = false;
+  const box = paneBox(el.getBoundingClientRect());
+  els.footFrame.style.left = `${box.left}px`;
+  els.footFrame.style.top = `${box.top}px`;
+  els.footFrame.style.width = `${box.width}px`;
+  els.footFrame.style.height = `${box.height}px`;
+  placeBar(els.footBar, box);
+}
+
+/** One change to the footer: one undo step, and a re-fit, since it moves the text's foot. */
+function setFooterSlot(slot, image) {
+  footer = { ...footer, [slot]: image };
+  if (!image && selectedSlot === slot) selectedSlot = null;
+  commit('footer');
+  update();
+  saveState();
+}
+
+function pickFooterImage(slot) {
+  footerTarget = slot;
+  els.footerFile.click();
+}
+
+async function footerImageFromFile(file) {
+  const slot = footerTarget;
+  footerTarget = null;
+  if (!slot || !file || !file.type.startsWith('image/')) return;
+  const src = await readFileAsDataURL(file);
+  const { width, height } = await getImageDimensions(src);
+  setFooterSlot(slot, { src, alt: String(file.name || '').replace(/\.[a-z0-9]+$/i, ''), w: width, h: height });
+}
+
+function onFooterAction(event) {
+  const act = event.target && event.target.dataset ? event.target.dataset.act : null;
+  if (!act || !selectedSlot) return;
+  if (act === 'replace') pickFooterImage(selectedSlot);
+  else if (act === 'remove') setFooterSlot(selectedSlot, null);
+}
+
 /* --- Image selection and resizing --------------------------------------- */
 
 const figureFor = (id) => (id ? sheetRefs.body.querySelector(`.doc-image[data-img="${id}"]`) : null);
@@ -518,6 +657,10 @@ function selectImage(id) {
   if (previous) previous.removeAttribute('data-selected');
   selectedImage = id && images[id] ? id : null;
   const next = figureFor(selectedImage);
+  if (next && selectedSlot) {
+    selectedSlot = null;
+    renderFooter();
+  }
   if (next) {
     next.setAttribute('data-selected', '1');
     // A picture and a run of words are never both "the thing being edited".
@@ -566,6 +709,7 @@ function placeBar(bar, box) {
 function syncTools() {
   syncImageTools();
   syncTextTools();
+  syncFooterTools();
 }
 
 function setFrame(box) {
@@ -589,6 +733,7 @@ function syncImageTools() {
   placeBar(els.imgBar, box);
 
   els.imgSize.textContent = `${Math.round(rec.width)}%`;
+  els.imgWidth.value = String(Math.round(rec.width));
   for (const btn of els.imgBar.querySelectorAll('.img-btn')) {
     const act = btn.dataset.act;
     if (act === 'left' || act === 'center' || act === 'right') {
@@ -734,12 +879,26 @@ function readSelection() {
     if (!node.dataset || node.dataset.u == null) continue;
     const index = Number(node.dataset.u);
     if (!units[index]) continue;
-    const length = node.textContent.length;
+    const length = ownLength(node);
     const from = Math.max(start, base) - base;
     const to = Math.min(end, base + length) - base;
     if (to > from) out.push({ index, start: from, end: to });
   }
   return out.length ? out : null;
+}
+
+/**
+ * A unit's own length on the page. A list item's element also holds the list
+ * nested under it, whose items are units of their own; counting their text
+ * here would stretch the parent over its children.
+ */
+function ownLength(el) {
+  let length = el.textContent.length;
+  for (const child of el.children) {
+    const tag = child.tagName.toUpperCase();
+    if (tag === 'UL' || tag === 'OL') length -= child.textContent.length;
+  }
+  return length;
 }
 
 /** The text node and offset that a unit's character offset lands on. */
@@ -829,6 +988,7 @@ function enablePageEditing() {
   }
 
   body.addEventListener('input', onPageInput);
+  body.addEventListener('paste', onPagePaste);
   body.addEventListener('blur', () => settlePage());
 }
 
@@ -965,11 +1125,13 @@ const snapshot = () => ({
   bgColor,
   inset,
   hlColor,
+  hlPad,
   fgColor,
   margin: els.margin.value,
   typeface: els.typeface.value,
   columns: els.columns.value,
   fill: els.fill.checked,
+  footer: { ...footer },
 });
 
 function commit(kind) {
@@ -995,13 +1157,17 @@ function applySnapshot(state) {
   bgColor = state.bgColor;
   inset = state.inset;
   hlColor = state.hlColor;
+  hlPad = state.hlPad == null ? 1 : state.hlPad;
   fgColor = state.fgColor;
   els.margin.value = state.margin;
   els.typeface.value = state.typeface;
   els.columns.value = state.columns;
   els.fill.checked = state.fill;
+  footer = { ...state.footer };
+  selectedSlot = null;
   els.bgColor.value = bgColor;
   els.fmtBg.value = hlColor;
+  els.fmtPad.value = String(hlPad);
   els.fmtFg.value = fgColor;
   els.insetToggle.checked = inset;
 
@@ -1102,12 +1268,57 @@ async function toggleBand() {
   saveState();
 }
 
+/**
+ * Alignment belongs to the paragraph, so like a band it applies to every unit
+ * the selection touches, whole. Pressing the alignment that is already on
+ * takes it off, back to the element's own.
+ */
+async function toggleAlign(value) {
+  const selection = await needSelection();
+  if (!selection) return;
+  const whole = selection.filter((s) => units[s.index]).map((s) => units[s.index]);
+  const on = whole.every((u) => allHave(u.marks, 0, u.plain.length, 'align', value));
+  for (const unit of whole) {
+    setUnitMarks(unit, formatRange(unit.marks, 0, unit.plain.length, { align: on ? null : value }, unit.plain.length));
+  }
+  keepOffsets = readSelectionOffsets();
+  commit('format');
+  update();
+  saveState();
+}
+
 /** Press once to apply, press again to take it off — as a toolbar should. */
 async function toggleFormat(key, value, opts = {}) {
   const selection = await needSelection();
   if (!selection) return;
   const on = selection.every((s) => units[s.index] && allHave(units[s.index].marks, s.start, s.end, key, value));
   await applyFormat({ [key]: on ? null : value }, { ...opts, selection });
+}
+
+/**
+ * A highlight is a colour and its padding, put on and taken off together, so
+ * a run that loses its colour does not keep a padding nothing can see.
+ */
+async function toggleHighlight() {
+  const selection = await needSelection();
+  if (!selection) return;
+  const on = selection.every((s) => units[s.index] && allHave(units[s.index].marks, s.start, s.end, 'bg', hlColor));
+  await applyFormat(on ? { bg: null, pad: null } : { bg: hlColor, pad: padMark(hlPad) }, { selection, refit: false });
+}
+
+/**
+ * The padding control: on a highlighted selection it changes only the
+ * padding; on words with no highlight yet it highlights them at that padding.
+ */
+async function setHighlightPad(pad) {
+  hlPad = pad;
+  const selection = pendingSelection || readSelection();
+  if (!selection) {
+    saveState();
+    return;
+  }
+  const lit = selection.every((s) => units[s.index] && allHave(units[s.index].marks, s.start, s.end, 'bg'));
+  await applyFormat(lit ? { pad: padMark(pad) } : { bg: hlColor, pad: padMark(pad) }, { selection, refit: false });
 }
 
 async function clearFormat() {
@@ -1171,6 +1382,12 @@ function syncTextTools() {
         'aria-pressed',
         String(selection.every((s) => units[s.index] && allHave(units[s.index].marks, 0, units[s.index].plain.length, 'band')))
       );
+    } else if (act === 'align') {
+      const value = btn.dataset.value;
+      btn.setAttribute(
+        'aria-pressed',
+        String(selection.every((s) => units[s.index] && allHave(units[s.index].marks, 0, units[s.index].plain.length, 'align', value)))
+      );
     }
   }
 
@@ -1179,6 +1396,7 @@ function syncTextTools() {
   els.fmtSize.textContent = `${Math.round((fmt.size || 1) * 100)}%`;
   if (fmt.fg) els.fmtFg.value = fmt.fg;
   if (fmt.bg) els.fmtBg.value = fmt.bg;
+  els.fmtPad.value = String(fmt.bg && fmt.pad != null ? fmt.pad : hlPad);
 }
 
 function onFormatAction(event) {
@@ -1186,6 +1404,7 @@ function onFormatAction(event) {
   if (!act) return;
   if (act === 'bold' || act === 'italic') toggleFormat(act, true);
   else if (act === 'band') toggleBand();
+  else if (act === 'align') toggleAlign(event.target.dataset.value);
   else if (act === 'bigger') stepSelectionSize(1);
   else if (act === 'smaller') stepSelectionSize(-1);
   else if (act === 'clear') clearFormat();
@@ -1205,6 +1424,7 @@ async function sheetHtml() {
     title: docTitle,
     bgColor,
     inset,
+    footerHtml: hasFooter(footer) ? footerHtml(footer) : '',
   });
 }
 
@@ -1232,6 +1452,14 @@ function insertAtCursor(textarea, text) {
 }
 
 function onPaste(event) {
+  // Word first: its clipboard can also carry a picture of the selection,
+  // which is not what was copied.
+  const rich = richFromPaste(event, { newImageId });
+  if (rich) {
+    event.preventDefault();
+    pasteRichIntoSource(rich);
+    return;
+  }
   if (handleImagePaste(event)) return;
   const text = textFromPaste(event);
   if (!text) return;
@@ -1239,6 +1467,87 @@ function onPaste(event) {
   insertAtCursor(els.source, text);
   commit('paste');
   update();
+  saveState();
+}
+
+/* --- Pasting from Word ---------------------------------------------------- */
+
+/**
+ * A document pasted into an empty page brings its own typeface and its single
+ * column with it: that is how it looked where it was copied from. Pasted into
+ * an existing document, it takes that document's settings instead.
+ */
+function adoptPastedSettings(rich) {
+  const face = rich.typeface && TYPEFACES[rich.typeface] ? rich.typeface : null;
+  if (face) els.typeface.value = face;
+  els.columns.value = '1';
+  // A document that brings its own floating logos has its own letterhead:
+  // the default footer steps aside rather than draw them twice. The empty
+  // slots stay there to be filled again.
+  if (Object.values(rich.images).some((img) => img.wrap)) footer = { left: null, right: null };
+}
+
+/** A Word paste's pictures and formatting, once its text is in the source. */
+function applyRichPaste(rich, unitsBefore) {
+  Object.assign(images, rich.images);
+  const all = collectUnits(parse(els.source.value));
+  marks.push(...marksFromRecords(all, rich.records, unitsBefore, rich.basePt));
+}
+
+/** Paste into the source pane: a block of its own at the cursor. */
+function pasteRichIntoSource(rich) {
+  const ta = els.source;
+  const wasEmpty = !ta.value.trim();
+  const at = ta.selectionStart == null ? ta.value.length : ta.selectionStart;
+  const to = ta.selectionEnd == null ? at : ta.selectionEnd;
+  const before = ta.value.slice(0, at).replace(/\s+$/, '');
+  const after = ta.value.slice(to).replace(/^\s+/, '');
+  ta.value = [before, rich.text, after].filter((p) => p !== '').join('\n\n');
+  const caret = (before ? before.length + 2 : 0) + rich.text.length;
+  ta.setSelectionRange(caret, caret);
+
+  applyRichPaste(rich, before ? collectUnits(parse(before)).length : 0);
+  if (wasEmpty) adoptPastedSettings(rich);
+  commit('paste');
+  update();
+  saveState();
+}
+
+/**
+ * Paste into the page: the pasted document is drawn after the block the caret
+ * is in, and the page is then read back into the source like any other edit.
+ * Left to itself the browser would paste Word's HTML as it is — every style
+ * Word wrote, inline.
+ */
+async function onPagePaste(event) {
+  const rich = richFromPaste(event, { newImageId });
+  if (!rich) return;
+  event.preventDefault();
+
+  const wasEmpty = !els.source.value.trim();
+  Object.assign(images, rich.images);
+  const holder = sheetRefs.doc.createElement('div');
+  holder.innerHTML = render(parse(rich.text).map((b) => (b.type === 'image' ? imageBlock(b.id) : b)));
+  const nodes = [...holder.childNodes].filter((n) => n.nodeType === 1);
+  if (!nodes.length) return;
+
+  const anchor = blockAtCaret();
+  const before = anchor ? anchor.nextSibling : null;
+  for (const node of nodes) sheetRefs.body.insertBefore(node, before);
+
+  // Units above the paste are the ones already numbered on the page.
+  let unitsBefore = 0;
+  for (const el of sheetRefs.body.querySelectorAll('[data-u]')) {
+    if (nodes[0].compareDocumentPosition(el) & 2 /* preceding */) unitsBefore++;
+  }
+
+  // One history step for the whole paste: the text, its pictures and its marks.
+  pageDirty = true;
+  els.source.value = sourceFromPage();
+  applyRichPaste(rich, unitsBefore);
+  if (wasEmpty) adoptPastedSettings(rich);
+  commit('paste');
+  await settlePage();
   saveState();
 }
 
@@ -1266,6 +1575,10 @@ function onEscape() {
   }
   if (selectedImage) {
     selectImage(null);
+    return true;
+  }
+  if (selectedSlot) {
+    selectFooterSlot(null);
     return true;
   }
   if (pendingSelection) {
@@ -1299,7 +1612,7 @@ function onKeyDown(event) {
 
   if (accel && event.shiftKey && key === 'h') {
     event.preventDefault();
-    toggleFormat('bg', hlColor, { refit: false });
+    toggleHighlight();
     return;
   }
   // Only ever hijack B and I for the page, never for the text being typed.
@@ -1318,6 +1631,9 @@ function onKeyDown(event) {
   if ((event.key === 'Delete' || event.key === 'Backspace') && selectedImage && event.target !== els.source) {
     event.preventDefault();
     removeImage(selectedImage);
+  } else if ((event.key === 'Delete' || event.key === 'Backspace') && selectedSlot && event.target !== els.source) {
+    event.preventDefault();
+    setFooterSlot(selectedSlot, null);
   }
 }
 
@@ -1325,6 +1641,15 @@ function wireSheet() {
   const { doc } = sheetRefs;
 
   doc.addEventListener('mousedown', (event) => {
+    const slot = event.target.closest ? event.target.closest('.footer-slot') : null;
+    if (slot) {
+      event.preventDefault();
+      // An empty slot is a "+ Image" target; a full one is selected.
+      if (slot.dataset.empty === '1') pickFooterImage(slot.dataset.slot);
+      else selectFooterSlot(slot.dataset.slot);
+      return;
+    }
+    if (selectedSlot) selectFooterSlot(null);
     const fig = event.target.closest ? event.target.closest('.doc-image') : null;
     selectImage(fig ? fig.dataset.img : null);
   });
@@ -1382,7 +1707,7 @@ function wire() {
     saveState();
   });
 
-  els.highlight.addEventListener('click', () => toggleFormat('bg', hlColor, { refit: false }));
+  els.highlight.addEventListener('click', () => toggleHighlight());
 
   // The colour pickers fire continuously while the wheel is dragged, and each
   // one is a re-render; a colour changes no geometry, so no re-fit either.
@@ -1392,7 +1717,13 @@ function wire() {
     pickFg();
   });
 
-  const pickBg = debounce(() => applyFormat({ bg: hlColor }, { refit: false }), 120);
+  const pickBg = debounce(() => applyFormat({ bg: hlColor, pad: padMark(hlPad) }, { refit: false }), 120);
+  els.fmtPad.addEventListener('change', () => {
+    const pad = Math.max(0, Math.min(20, Math.round(Number(els.fmtPad.value)) || 0));
+    els.fmtPad.value = String(pad);
+    setHighlightPad(pad);
+  });
+
   els.fmtBg.addEventListener('input', () => {
     hlColor = els.fmtBg.value; // also becomes what the toolbar button applies
     pickBg();
@@ -1426,6 +1757,40 @@ function wire() {
     }
   });
 
+  // A picture dropped anywhere else in the window lands at the source caret,
+  // and a stray file dropped on the window never navigates the app away.
+  const dropImages = async (e) => {
+    if (e.defaultPrevented) return;
+    e.preventDefault();
+    for (const file of e.dataTransfer ? e.dataTransfer.files : []) {
+      if (file.type.startsWith('image/')) await addImageFromFile(file);
+    }
+  };
+  const allowDrop = (e) => {
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+  };
+  window.addEventListener('dragover', allowDrop);
+  window.addEventListener('drop', dropImages);
+  sheetRefs.doc.addEventListener('dragover', allowDrop);
+  sheetRefs.doc.addEventListener('drop', dropImages);
+
+  // The width slider previews as it moves and commits when it is let go.
+  els.imgWidth.addEventListener('input', () => {
+    const fig = figureFor(selectedImage);
+    if (!fig) return;
+    fig.style.setProperty('--img-w', els.imgWidth.value);
+    els.imgSize.textContent = `${els.imgWidth.value}%`;
+    setFrame(paneBox(fig.getBoundingClientRect()));
+  });
+  els.imgWidth.addEventListener('change', () => {
+    if (!selectedImage) return;
+    images[selectedImage].width = clamp(Number(els.imgWidth.value), 10, 100);
+    commit('image');
+    update();
+    saveState();
+  });
+
   els.undo.addEventListener('click', undo);
   els.redo.addEventListener('click', redo);
 
@@ -1434,11 +1799,19 @@ function wire() {
   window.addEventListener('pointerup', endResize);
   window.addEventListener('pointercancel', cancelResize);
   els.imgBar.addEventListener('click', onImageAction);
+  els.footBar.addEventListener('click', onFooterAction);
+  els.footerFile.addEventListener('change', async () => {
+    await footerImageFromFile(els.footerFile.files[0]);
+    els.footerFile.value = '';
+  });
 
   els.preview.addEventListener('scroll', syncTools, { passive: true });
   els.preview.addEventListener('mousedown', (event) => {
     // A click on the canvas around the sheet lets the picture go.
-    if (event.target === els.preview || event.target === els.scaler) selectImage(null);
+    if (event.target === els.preview || event.target === els.scaler) {
+      selectImage(null);
+      selectFooterSlot(null);
+    }
   });
 
   els.print.addEventListener('click', () =>
@@ -1460,7 +1833,7 @@ function wire() {
     withBusy(els.docx, async () => {
       await settlePage();
       const { blocks } = currentDoc();
-      const r = await exportDocx({ blocks, layout, face: currentFace(), title: docTitle });
+      const r = await exportDocx({ blocks, layout, face: currentFace(), title: docTitle, footer });
       if (r && r.saved && r.filePath) flash(`Saved ${r.filePath}`);
     })
   );
@@ -1551,12 +1924,20 @@ function exposeForTests() {
       await update();
     },
     imageOf: (id) => ({ ...images[id] }),
+    footer: () => ({ left: footer.left ? { ...footer.left } : null, right: footer.right ? { ...footer.right } : null }),
+    setFooter: async (slot, src, w, h) => {
+      footer = { ...footer, [slot]: src ? { src, alt: '', w, h } : null };
+      commit('footer');
+      await update();
+      saveState();
+    },
+    selectFooter: (slot) => selectFooterSlot(slot),
     selectImage,
     sheetHtml,
     docxBytes: async () => {
       const { blocks } = currentDoc();
       const { buildDocx } = await import('./to-docx.js');
-      const blob = await buildDocx({ blocks, layout, face: currentFace(), title: docTitle });
+      const blob = await buildDocx({ blocks, layout, face: currentFace(), title: docTitle, footer });
       return Array.from(new Uint8Array(await blob.arrayBuffer()));
     },
   };

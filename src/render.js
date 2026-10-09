@@ -6,7 +6,8 @@
  * is no sanitiser to get wrong.
  */
 
-import { tokenizeMarked } from './inline.js';
+import { tokenizeMarked, plainText } from './inline.js';
+import { LIST_GLYPHS } from './parse.js';
 
 const ESCAPES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
 
@@ -14,6 +15,9 @@ export const escapeHtml = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, 
 
 const HEX = /^#[0-9a-f]{6}$/i;
 const ALIGNMENTS = new Set(['left', 'center', 'right']);
+const TEXT_ALIGNS = new Set(['left', 'center', 'right', 'justify']);
+const VERTICAL_ALIGNS = new Set(['top', 'middle', 'bottom']);
+const LIST_STYLES = { 'lower-alpha': 'a', 'upper-alpha': 'A' };
 
 /** Only http(s) and mailto survive; anything else becomes plain text. */
 function safeHref(href) {
@@ -29,9 +33,21 @@ function safeSrc(src) {
 const safeColor = (c) => (HEX.test(String(c || '')) ? String(c).toLowerCase() : null);
 
 /**
+ * A highlight's padding, from tenths of an em. The vertical part is a fraction
+ * of the horizontal: on an inline box it paints over the lines above and
+ * below rather than pushing them apart, so the line boxes — and the fit — do
+ * not move, and a large value only grows sideways.
+ */
+export function padOf(fmt) {
+  if (!fmt || fmt.pad == null) return null;
+  const pad = Math.max(0, Math.min(20, Math.round(Number(fmt.pad)) || 0));
+  return { h: pad / 10, v: Math.round(pad * 3.5) / 100 };
+}
+
+/**
  * A run's formatting as inline CSS.
  *
- * Only these five properties exist, every colour must be a plain hex and the
+ * Only these properties exist, every colour must be a plain hex and the
  * size is a multiplier expressed in em — so a formatted run still scales with
  * whatever size the fitter lands on, and nothing a user typed can become a
  * style declaration.
@@ -43,10 +59,15 @@ function styleFor(fmt) {
   const fg = safeColor(fmt.fg);
   const size = Number(fmt.size);
   if (bg) decls.push(`background:${bg}`);
+  const pad = padOf(fmt);
+  if (bg && pad != null) decls.push(`padding:${pad.v}em ${pad.h}em`);
   if (fg) decls.push(`color:${fg}`);
   if (size > 0.2 && size < 5 && size !== 1) decls.push(`font-size:${Math.round(size * 1000) / 1000}em`);
-  if (fmt.bold) decls.push('font-weight:700');
-  if (fmt.italic) decls.push('font-style:italic');
+  if (fmt.bold === true) decls.push('font-weight:700');
+  else if (fmt.bold === false) decls.push('font-weight:400');
+  if (fmt.italic === true) decls.push('font-style:italic');
+  else if (fmt.italic === false) decls.push('font-style:normal');
+  if (fmt.underline) decls.push('text-decoration:underline');
   if (!decls.length) return null;
   return { css: decls.join(';'), marked: Boolean(bg) };
 }
@@ -67,12 +88,55 @@ function bandOf(marks) {
   return null;
 }
 
+/**
+ * A size every character of a list item shares. It is drawn on the item
+ * rather than on its words, so the number or bullet the item draws for itself
+ * is that size too — a list of references set small has small numbers.
+ */
+function uniformSize(marks, length) {
+  if (!marks || !marks.length || !length) return null;
+  const size = marks[0].fmt && Number(marks[0].fmt.size);
+  if (!(size > 0.2 && size < 5) || size === 1) return null;
+  let at = 0;
+  for (const m of marks) {
+    if (m.start !== at || !m.fmt || Number(m.fmt.size) !== size) return null;
+    at = m.end;
+  }
+  return at >= length ? size : null;
+}
+
+/** The same marks without their size, once the element carries it. */
+const withoutSize = (marks) =>
+  marks.map((m) => {
+    const fmt = { ...m.fmt };
+    delete fmt.size;
+    return { ...m, fmt };
+  });
+
+/** A whole-unit property — alignment, vertical alignment — if one is set. */
+function unitProp(marks, key, allowed) {
+  if (!marks) return null;
+  for (const m of marks) {
+    const v = m.fmt && m.fmt[key];
+    if (allowed.has(v)) return v;
+  }
+  return null;
+}
+
 /** Width as a percentage of the column, clamped to something drawable. */
 export const clampWidth = (w) => Math.max(10, Math.min(100, Math.round(Number(w) || 60)));
 
 /** One token as HTML, with its inline emphasis, code and link wrappers. */
+/**
+ * A hard line break is a newline in the text, and it stays one in the page: a
+ * preserved newline in a span of its own rather than a <br>. A <br> has no
+ * text, so every character offset after it — which is what a selection, a
+ * mark and the caret are measured in — would be one short.
+ */
+const LINE_BREAK = '<span class="doc-br">\n</span>';
+
 function tokenHtml(t) {
-  let html = escapeHtml(t.text);
+  let html = escapeHtml(t.text).replace(/\n/g, LINE_BREAK);
   if (t.code) html = `<code>${html}</code>`;
   if (t.bold) html = `<strong>${html}</strong>`;
   if (t.italic) html = `<em>${html}</em>`;
@@ -130,27 +194,71 @@ export function render(blocks, opts = {}) {
   const idOf = (b, sub) =>
     opts.editor && b._u && b._u[sub] != null ? ` data-u="${b._u[sub]}"` : '';
 
-  /** The attributes a unit's element carries: its id and its band, if any. */
-  const attrs = (b, sub) => {
-    const band = bandOf(marksOf(b, sub));
-    return `${idOf(b, sub)}${band ? ` class="doc-band" style="background:${band}"` : ''}`;
+  /**
+   * The declarations a unit's element carries for its whole-unit marks.
+   *
+   * Inside a shaded cell the shading is the cell's, so the units in it keep
+   * their alignment but not a band of their own — a band's inset would draw a
+   * second, slightly larger box inside the first.
+   */
+  const unitCss = (marks, size) => {
+    const decls = [];
+    const band = opts.shaded ? null : bandOf(marks);
+    const align = unitProp(marks, 'align', TEXT_ALIGNS);
+    const valign = unitProp(marks, 'valign', VERTICAL_ALIGNS);
+    if (band) decls.push(`background:${band}`);
+    if (align) decls.push(`text-align:${align}`);
+    if (valign) decls.push(`vertical-align:${valign}`);
+    if (size) decls.push(`font-size:${Math.round(size * 1000) / 1000}em`);
+    return { band, css: decls.join(';') };
   };
 
-  const cell = (b, sub, text, header) =>
-    `<${header ? 'th' : 'td'}${attrs(b, sub)}>${inline(text, marksOf(b, sub))}</${header ? 'th' : 'td'}>`;
+  /** A list item's size, when the whole of it is one size; see uniformSize. */
+  const sizeOf = (b, sub, value) =>
+    b.type === 'ul' || b.type === 'ol' ? uniformSize(marksOf(b, sub), plainText(value).length) : null;
+
+  /** The attributes a unit's element carries: its id, its band, its alignment and size. */
+  const attrs = (b, sub, value) => {
+    const size = value == null ? null : sizeOf(b, sub, value);
+    const { band, css } = unitCss(marksOf(b, sub), size);
+    return `${idOf(b, sub)}${band ? ' class="doc-band"' : ''}${css ? ` style="${css}"` : ''}`;
+  };
+
+  const text = (b, sub, value) => {
+    const marks = marksOf(b, sub);
+    return inline(value, sizeOf(b, sub, value) ? withoutSize(marks) : marks);
+  };
+
+  /**
+   * A cell. A cell that holds paragraphs and lists is rendered as the small
+   * document it is; when every unit inside it carries the same band, that
+   * band is the cell's shading and colours the whole cell, as Word draws it.
+   */
+  const cell = (b, sub, value, header) => {
+    const tag = header ? 'th' : 'td';
+    const inner = b.cells && b.cells[sub];
+    if (!inner) return `<${tag}${attrs(b, sub, value)}>${text(b, sub, value)}</${tag}>`;
+
+    const shared = sharedCellProps(inner);
+    const decls = [];
+    if (shared.band) decls.push(`background:${shared.band}`);
+    if (shared.valign) decls.push(`vertical-align:${shared.valign}`);
+    const style = decls.length ? ` style="${decls.join(';')}"` : '';
+    return `<${tag} class="doc-cell"${style}>${render(inner, { ...opts, shaded: Boolean(shared.band) })}</${tag}>`;
+  };
 
   for (const b of blocks) {
     switch (b.type) {
       case 'h1':
       case 'h2':
       case 'h3':
-        out.push(`<${b.type}${attrs(b, 'text')}>${inline(b.text, marksOf(b, 'text'))}</${b.type}>`);
+        out.push(`<${b.type}${attrs(b, 'text', b.text)}>${text(b, 'text', b.text)}</${b.type}>`);
         break;
       case 'p':
-        out.push(`<p${attrs(b, 'text')}>${inline(b.text, marksOf(b, 'text'))}</p>`);
+        out.push(`<p${attrs(b, 'text', b.text)}>${text(b, 'text', b.text)}</p>`);
         break;
       case 'quote':
-        out.push(`<blockquote${attrs(b, 'text')}>${inline(b.text, marksOf(b, 'text'))}</blockquote>`);
+        out.push(`<blockquote${attrs(b, 'text', b.text)}>${text(b, 'text', b.text)}</blockquote>`);
         break;
       case 'code':
         out.push(`<pre><code>${escapeHtml(b.text)}</code></pre>`);
@@ -159,23 +267,28 @@ export function render(blocks, opts = {}) {
         out.push('<hr>');
         break;
       case 'ul':
-      case 'ol': {
-        const start = b.type === 'ol' && b.start && b.start !== 1 ? ` start="${b.start}"` : '';
-        const items = b.items
-          .map((it, j) => `<li${attrs(b, `items.${j}`)}>${inline(it, marksOf(b, `items.${j}`))}</li>`)
-          .join('');
-        out.push(`<${b.type}${start}>${items}</${b.type}>`);
+      case 'ol':
+        out.push(renderList(b, (j) => `<li${attrs(b, `items.${j}`, b.items[j])}${glyphAttr(b, j)}>${text(b, `items.${j}`, b.items[j])}`));
         break;
-      }
       case 'table': {
         const head =
-          b.head && b.head.length
+          !b.headless && b.head && b.head.length
             ? `<thead><tr>${b.head.map((c, j) => cell(b, `head.${j}`, c, true)).join('')}</tr></thead>`
             : '';
         const body = (b.rows || [])
           .map((r, ri) => `<tr>${r.map((c, j) => cell(b, `rows.${ri}.${j}`, c, false)).join('')}</tr>`)
           .join('');
-        out.push(`<table>${head}<tbody>${body}</tbody></table>`);
+        const cols =
+          b.widths && b.widths.length
+            ? `<colgroup>${b.widths.map((w) => `<col style="width:${clampPercent(w)}%">`).join('')}</colgroup>`
+            : '';
+        const border = safeColor(b.border);
+        const tableAttrs = [
+          b.headless ? ' data-head="0"' : '',
+          b.widths && b.widths.length ? ` data-widths="${b.widths.map(clampPercent).join(' ')}"` : '',
+          border ? ` data-border="${border}" style="--table-rule:${border}"` : '',
+        ].join('');
+        out.push(`<table${tableAttrs}>${cols}${head}<tbody>${body}</tbody></table>`);
         break;
       }
       case 'image': {
@@ -197,4 +310,76 @@ export function render(blocks, opts = {}) {
     }
   }
   return out.join('\n');
+}
+
+const clampPercent = (w) => Math.max(1, Math.min(100, Math.round(Number(w) * 100) / 100));
+
+/** The band and vertical alignment every unit in a cell agrees on, if they do. */
+function sharedCellProps(blocks) {
+  const all = [];
+  for (const b of blocks) {
+    const subs = b.type === 'ul' || b.type === 'ol' ? b.items.map((_, j) => `items.${j}`) : ['text'];
+    for (const sub of subs) all.push(b._marks ? b._marks[sub] : null);
+  }
+  const agree = (read) => {
+    const first = read(all[0]);
+    return first && all.every((m) => read(m) === first) ? first : null;
+  };
+  return {
+    band: all.length ? agree(bandOf) : null,
+    valign: all.length ? agree((m) => unitProp(m, 'valign', VERTICAL_ALIGNS)) : null,
+  };
+}
+
+/** A drawn bullet: only a glyph the parser itself recognises reaches the page. */
+const glyphOf = (b, j) => {
+  const g = b.glyphs ? b.glyphs[j] : null;
+  return g && g.length === 1 && LIST_GLYPHS.includes(g) ? g : null;
+};
+const glyphAttr = (b, j) => (glyphOf(b, j) ? ` data-glyph="${escapeHtml(glyphOf(b, j))}"` : '');
+
+/**
+ * A list, nested by each item's level. Items stay one flat array in the model
+ * — `items.N` addresses an item however deep it sits — and the nesting is
+ * rebuilt here: a deeper item opens a list inside the item above it, and a
+ * change of kind at the same depth closes one list and opens the other.
+ *
+ * @param {import('./parse.js').ListBlock} b
+ * @param {(j:number) => string} itemOpen — the item's opening tag and text
+ */
+function renderList(b, itemOpen) {
+  const n = b.items.length;
+  const levelOf = (j) => (b.levels ? b.levels[j] : 0);
+  const kindOf = (j) => (b.kinds ? b.kinds[j] : b.type);
+
+  const openList = (j) => {
+    const kind = kindOf(j);
+    if (kind !== 'ol') return '<ul>';
+    const start = b.nums ? b.nums[j] : b.start;
+    const type = LIST_STYLES[b.styles ? b.styles[j] : null];
+    return `<ol${start && start !== 1 ? ` start="${start}"` : ''}${type ? ` type="${type}"` : ''}>`;
+  };
+
+  let html = '';
+  const stack = [];
+  const close = () => {
+    const top = stack.pop();
+    html += `${top.open ? '</li>' : ''}</${top.kind}>`;
+  };
+
+  for (let j = 0; j < n; j++) {
+    const level = levelOf(j);
+    while (stack.length > level + 1) close();
+    if (stack.length === level + 1 && stack[level].kind !== kindOf(j)) close();
+    while (stack.length < level + 1) {
+      html += openList(j);
+      stack.push({ kind: kindOf(j), open: false });
+    }
+    const top = stack[stack.length - 1];
+    if (top.open) html += '</li>';
+    html += itemOpen(j);
+    top.open = true;
+  }
+  while (stack.length) close();
+  return html;
 }

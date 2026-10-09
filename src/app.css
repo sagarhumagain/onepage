@@ -670,6 +670,20 @@ textarea:focus-visible,
   font-weight: 800;
 }
 
+/* The highlight's padding, sized to sit in the bar beside its colour. */
+.fmt-pad {
+  width: 38px;
+  height: 22px;
+  font: inherit;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 0 2px 0 5px;
+}
+
 /* While a handle is being dragged the pointer must not become a text cursor
    the moment it crosses the iframe. */
 body.resizing,
@@ -706,4 +720,10 @@ body.resizing * {
   .actions .btn {
     flex: 1 1 0;
   }
+}
+
+/* The image width slider, inside the image toolbar. */
+.img-width {
+  width: 7rem;
+  accent-color: #0f766e;
 }

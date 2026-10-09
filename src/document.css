@@ -21,6 +21,9 @@
   --doc-bg: #ffffff;
   /* The fitter's last lever before type goes below the readable floor. */
   --doc-image-scale: 1;
+  /* The footer strip and the gap above it, mm. Mirrors footer.js. */
+  --footer-mm: 20;
+  --footer-gap-mm: 3;
 
   position: relative;
   box-sizing: border-box;
@@ -118,6 +121,32 @@
   margin-bottom: 0;
 }
 
+/* A list inside an item is part of that item, not a new paragraph. */
+.page-body li > ul,
+.page-body li > ol {
+  margin: 0.24em 0 0;
+}
+
+/* A bullet is a disc at every depth, as Word draws one; any other mark is a
+   glyph the list names itself. */
+.page-body li ul {
+  list-style-type: disc;
+}
+
+/* A bullet drawn as written — a tick, an arrowhead — rather than a disc. */
+.page-body li[data-glyph]::marker {
+  content: attr(data-glyph) '\00a0\00a0';
+}
+
+/*
+ * A hard line break. It is a real newline in the text, preserved here, so the
+ * break counts as one character exactly as it does in the source — a <br>
+ * would count as none and shift every offset after it.
+ */
+.page-body .doc-br {
+  white-space: pre;
+}
+
 .page-body blockquote {
   margin: 0.7em 0;
   padding: 0.1em 0 0.1em 0.85em;
@@ -176,10 +205,29 @@
 
 .page-body th,
 .page-body td {
-  border: 1px solid var(--doc-rule);
+  /* A table can name its own rule colour; Word's are usually black. */
+  border: 1px solid var(--table-rule, var(--doc-rule));
   padding: 0.3em 0.45em;
   text-align: left;
   vertical-align: top;
+}
+
+/* Column widths the source gave are the widths, not suggestions. */
+.page-body table[data-widths] {
+  table-layout: fixed;
+}
+
+/* A cell holding paragraphs and lists: their spacing between, none outside. */
+.page-body .doc-cell > :first-child {
+  margin-top: 0;
+}
+
+.page-body .doc-cell > :last-child {
+  margin-bottom: 0;
+}
+
+.page-body .doc-cell p {
+  margin-bottom: 0.4em;
 }
 
 .page-body th {
@@ -251,12 +299,58 @@
   text-align: center;
 }
 
+/* --- Footer ------------------------------------------------------------ */
+
+/*
+ * Two pictures pinned to the foot of the page, inside the margins. The footer
+ * is positioned, not in the flow, and the measured text box is shortened by
+ * exactly its strip — so the fitter sees the smaller area and fits to it, and
+ * the text box stays an ordinary box of definite height in one column or
+ * three. With no picture in it the attribute is off and nothing here applies.
+ */
+.page[data-footer='1'] .page-body {
+  height: calc(100% - (var(--footer-mm) + var(--footer-gap-mm)) * 1mm);
+}
+
+.page-footer {
+  position: absolute;
+  left: calc(var(--doc-margin-mm) * 1mm);
+  right: calc(var(--doc-margin-mm) * 1mm);
+  bottom: calc(var(--doc-margin-mm) * 1mm);
+  height: calc(var(--footer-mm) * 1mm);
+  display: none;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.page[data-footer='1'] .page-footer {
+  display: flex;
+}
+
+.page-footer .footer-slot {
+  margin: 0;
+  height: 100%;
+  max-width: 48%;
+  display: flex;
+  align-items: center;
+}
+
+.page-footer .footer-slot img {
+  display: block;
+  height: 100%;
+  width: auto;
+  max-width: 100%;
+  object-fit: contain;
+}
+
 /* --- Highlights -------------------------------------------------------- */
 
 /*
  * The colour is written inline by the renderer, per mark, so a document can
- * carry more than one. Padding is horizontal only: a vertical pad would change
- * the line box and move every line below it.
+ * carry more than one, and so is the padding when the highlight was given one.
+ * The default here is horizontal only. Vertical padding on an inline box does
+ * not grow the line it sits on — it paints over the lines either side — which
+ * is why the renderer keeps it a small fraction of the horizontal.
  */
 .page-body mark {
   background: #ffe08a;

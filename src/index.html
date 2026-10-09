@@ -141,6 +141,7 @@
             <span class="img-handle" data-corner="se"></span>
           </div>
           <div class="img-bar" id="img-bar">
+            <input type="range" class="img-width" id="img-width" min="10" max="100" step="1" title="Width, as a share of the column" />
             <span class="img-size" id="img-size">60%</span>
             <span class="img-bar-sep" aria-hidden="true"></span>
             <button type="button" class="img-btn" data-act="left" title="Align left">Left</button>
@@ -152,6 +153,20 @@
             <button type="button" class="img-btn img-btn-danger" data-act="remove" title="Remove this image">Remove</button>
           </div>
         </div>
+
+        <!--
+          The footer's two pictures: select one to replace it or take it away.
+          An empty slot is filled by clicking its "+ Image" box in the page.
+        -->
+        <div class="img-tools" id="foot-tools" hidden>
+          <div class="img-frame" id="foot-frame"></div>
+          <div class="img-bar" id="foot-bar">
+            <button type="button" class="img-btn" data-act="replace" title="Use another picture here">Replace…</button>
+            <span class="img-bar-sep" aria-hidden="true"></span>
+            <button type="button" class="img-btn img-btn-danger" data-act="remove" title="Leave this side of the footer empty">Remove</button>
+          </div>
+        </div>
+        <input type="file" id="footer-file" accept="image/*" hidden />
 
         <!--
           The same idea for words: select any run of text in the page and the
@@ -175,6 +190,16 @@
               <span class="fmt-pick-label fmt-pick-fill">H</span>
               <input type="color" id="fmt-bg" value="#ffe08a" />
             </label>
+            <input
+              type="number"
+              id="fmt-pad"
+              class="fmt-pad"
+              min="0"
+              max="20"
+              step="1"
+              value="1"
+              title="Padding around the highlight, in tenths of a line"
+            />
             <button
               type="button"
               class="fmt-btn"
@@ -183,6 +208,11 @@
             >
               Band
             </button>
+            <span class="img-bar-sep" aria-hidden="true"></span>
+            <button type="button" class="fmt-btn" data-fmt="align" data-value="left" title="Align left">L</button>
+            <button type="button" class="fmt-btn" data-fmt="align" data-value="center" title="Centre">C</button>
+            <button type="button" class="fmt-btn" data-fmt="align" data-value="right" title="Align right">R</button>
+            <button type="button" class="fmt-btn" data-fmt="align" data-value="justify" title="Justify">J</button>
             <span class="img-bar-sep" aria-hidden="true"></span>
             <button type="button" class="fmt-btn" data-fmt="clear" title="Remove all formatting from the selection">Clear</button>
           </div>
