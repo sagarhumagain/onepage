@@ -14,7 +14,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { parse } from '../src/parse.js';
-import { render } from '../src/render.js';
+import { render, padOf } from '../src/render.js';
 import { tokenizeInline, plainText } from '../src/inline.js';
 import { applyMarks, collectUnits } from '../src/marks.js';
 import { extractRtfPictures } from '../src/rtf.js';
@@ -231,4 +231,23 @@ test("Word's lengths, colours and symbol fonts read as what they draw", () => {
   assert.equal(mapSymbols('ü', 'Wingdings'), TICK);
   assert.equal(mapSymbols('', 'Calibri'), '→');
   assert.equal(declarations("font-size:9.0pt;\n  color:black").get('color'), 'black');
+});
+
+/* --- highlight padding ------------------------------------------------------- */
+
+test('a highlight carries its own padding, mostly sideways', () => {
+  const blocks = parse('Doc\n\nBody text.');
+  applyMarks(blocks, [mark('Body text.', 0, 4, { bg: '#ffe08a', pad: 6 })]);
+  const html = render(blocks);
+  // Vertical padding paints over the neighbouring lines rather than moving
+  // them, so it is kept a fraction of the horizontal.
+  assert.ok(html.includes('<mark style="background:#ffe08a;padding:0.21em 0.6em">Body</mark>'), html);
+});
+
+test('padding without a highlight, or out of range, never reaches the page', () => {
+  const blocks = parse('Doc\n\nBody text.');
+  applyMarks(blocks, [mark('Body text.', 0, 4, { pad: 6 })]);
+  assert.ok(!render(blocks).includes('padding'));
+  assert.deepEqual(padOf({ pad: 99 }), { h: 2, v: 0.7 });
+  assert.equal(padOf({}), null);
 });

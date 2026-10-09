@@ -28,9 +28,10 @@ import { plainText } from './inline.js';
 
 /**
  * `bold: false` is meaningful: it is a heading, or a header cell, set in the
- * regular weight its source used.
- * @typedef {{bg?:string, band?:string, fg?:string, size?:number, bold?:boolean, italic?:boolean,
- *   underline?:boolean, align?:string, valign?:string}} Fmt
+ * regular weight its source used. `pad` is a highlight's padding in tenths of
+ * an em, and only means anything alongside `bg`.
+ * @typedef {{bg?:string, pad?:number, band?:string, fg?:string, size?:number, bold?:boolean,
+ *   italic?:boolean, underline?:boolean, align?:string, valign?:string}} Fmt
  */
 /** @typedef {{start:number, end:number, fmt:Fmt}} Mark */
 /** @typedef {{sig:string, nth:number, text:string, start:number, end:number, fmt:Fmt}} StoredMark */
@@ -134,7 +135,7 @@ function anchor(units, taken, m) {
  * `align` and `valign`, which belong to the paragraph or the cell rather than
  * to any of its words.
  */
-const KEYS = ['bg', 'band', 'fg', 'size', 'bold', 'italic', 'underline', 'align', 'valign'];
+const KEYS = ['bg', 'pad', 'band', 'fg', 'size', 'bold', 'italic', 'underline', 'align', 'valign'];
 
 /** Properties of the whole unit; see above. */
 export const UNIT_KEYS = ['band', 'align', 'valign'];

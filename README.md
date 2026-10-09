@@ -47,8 +47,9 @@ identical to a pasted one.
 
 **Formatting** works on a selection in the page, not on the source. Select any
 run of words and a bar appears over it: bold, italic, bigger, smaller, text
-colour, highlight, **band** and clear. A highlight hugs the words; a band fills
-the whole width of the line, which is what a section header bar is. Sizes are
+colour, highlight, **band** and clear. A highlight hugs the words, with a
+padding of its own set beside its colour; a band fills the whole width of the
+line, which is what a section header bar is. Sizes are
 multipliers, never point sizes — the fitter owns absolute size, so an
 emphasised line grows and shrinks with the rest of the page and the one-page
 guarantee still holds. Formatting is stored against the words it was applied to

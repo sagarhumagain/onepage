@@ -33,9 +33,21 @@ function safeSrc(src) {
 const safeColor = (c) => (HEX.test(String(c || '')) ? String(c).toLowerCase() : null);
 
 /**
+ * A highlight's padding, from tenths of an em. The vertical part is a fraction
+ * of the horizontal: on an inline box it paints over the lines above and
+ * below rather than pushing them apart, so the line boxes — and the fit — do
+ * not move, and a large value only grows sideways.
+ */
+export function padOf(fmt) {
+  if (!fmt || fmt.pad == null) return null;
+  const pad = Math.max(0, Math.min(20, Math.round(Number(fmt.pad)) || 0));
+  return { h: pad / 10, v: Math.round(pad * 3.5) / 100 };
+}
+
+/**
  * A run's formatting as inline CSS.
  *
- * Only these five properties exist, every colour must be a plain hex and the
+ * Only these properties exist, every colour must be a plain hex and the
  * size is a multiplier expressed in em — so a formatted run still scales with
  * whatever size the fitter lands on, and nothing a user typed can become a
  * style declaration.
@@ -47,6 +59,8 @@ function styleFor(fmt) {
   const fg = safeColor(fmt.fg);
   const size = Number(fmt.size);
   if (bg) decls.push(`background:${bg}`);
+  const pad = padOf(fmt);
+  if (bg && pad != null) decls.push(`padding:${pad.v}em ${pad.h}em`);
   if (fg) decls.push(`color:${fg}`);
   if (size > 0.2 && size < 5 && size !== 1) decls.push(`font-size:${Math.round(size * 1000) / 1000}em`);
   if (fmt.bold === true) decls.push('font-weight:700');
