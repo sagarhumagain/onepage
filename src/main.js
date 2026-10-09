@@ -59,6 +59,7 @@ const els = {
   fmtSize: $('fmt-size'),
   fmtFg: $('fmt-fg'),
   fmtBg: $('fmt-bg'),
+  fmtPad: $('fmt-pad'),
 };
 
 const STORE_KEY = 'onepage.state.v3';
@@ -80,6 +81,10 @@ let fontScale = 1.0;
 let bgColor = '#ffffff';
 let inset = false;
 let hlColor = '#ffe08a';
+/** Padding around a highlight, in tenths of an em; 1 is the look it always had. */
+let hlPad = 1;
+/** The default padding is the stylesheet's, so it is stored as no padding at all. */
+const padMark = (pad) => (pad === 1 ? null : pad);
 let fgColor = '#b42318';
 
 /** id -> {src, alt, w, h, width, align, wrap}. Positions live in the text. */
@@ -156,6 +161,7 @@ function saveState() {
         bgColor,
         inset,
         hlColor,
+        hlPad,
         fgColor,
         images: kept,
         marks,
@@ -191,12 +197,14 @@ function restoreState() {
   if (typeof s.bgColor === 'string') bgColor = s.bgColor;
   if (typeof s.inset === 'boolean') inset = s.inset;
   if (typeof s.hlColor === 'string') hlColor = s.hlColor;
+  if (typeof s.hlPad === 'number') hlPad = s.hlPad;
   if (typeof s.fgColor === 'string') fgColor = s.fgColor;
   if (s.images && typeof s.images === 'object') images = s.images;
   if (Array.isArray(s.marks)) marks = s.marks;
 
   els.bgColor.value = bgColor;
   els.fmtBg.value = hlColor;
+  els.fmtPad.value = String(hlPad);
   els.fmtFg.value = fgColor;
   els.insetToggle.checked = inset;
 }
@@ -980,6 +988,7 @@ const snapshot = () => ({
   bgColor,
   inset,
   hlColor,
+  hlPad,
   fgColor,
   margin: els.margin.value,
   typeface: els.typeface.value,
@@ -1010,6 +1019,7 @@ function applySnapshot(state) {
   bgColor = state.bgColor;
   inset = state.inset;
   hlColor = state.hlColor;
+  hlPad = state.hlPad == null ? 1 : state.hlPad;
   fgColor = state.fgColor;
   els.margin.value = state.margin;
   els.typeface.value = state.typeface;
@@ -1017,6 +1027,7 @@ function applySnapshot(state) {
   els.fill.checked = state.fill;
   els.bgColor.value = bgColor;
   els.fmtBg.value = hlColor;
+  els.fmtPad.value = String(hlPad);
   els.fmtFg.value = fgColor;
   els.insetToggle.checked = inset;
 
@@ -1125,6 +1136,32 @@ async function toggleFormat(key, value, opts = {}) {
   await applyFormat({ [key]: on ? null : value }, { ...opts, selection });
 }
 
+/**
+ * A highlight is a colour and its padding, put on and taken off together, so
+ * a run that loses its colour does not keep a padding nothing can see.
+ */
+async function toggleHighlight() {
+  const selection = await needSelection();
+  if (!selection) return;
+  const on = selection.every((s) => units[s.index] && allHave(units[s.index].marks, s.start, s.end, 'bg', hlColor));
+  await applyFormat(on ? { bg: null, pad: null } : { bg: hlColor, pad: padMark(hlPad) }, { selection, refit: false });
+}
+
+/**
+ * The padding control: on a highlighted selection it changes only the
+ * padding; on words with no highlight yet it highlights them at that padding.
+ */
+async function setHighlightPad(pad) {
+  hlPad = pad;
+  const selection = pendingSelection || readSelection();
+  if (!selection) {
+    saveState();
+    return;
+  }
+  const lit = selection.every((s) => units[s.index] && allHave(units[s.index].marks, s.start, s.end, 'bg'));
+  await applyFormat(lit ? { pad: padMark(pad) } : { bg: hlColor, pad: padMark(pad) }, { selection, refit: false });
+}
+
 async function clearFormat() {
   const selection = await needSelection();
   if (!selection) return;
@@ -1194,6 +1231,7 @@ function syncTextTools() {
   els.fmtSize.textContent = `${Math.round((fmt.size || 1) * 100)}%`;
   if (fmt.fg) els.fmtFg.value = fmt.fg;
   if (fmt.bg) els.fmtBg.value = fmt.bg;
+  els.fmtPad.value = String(fmt.bg && fmt.pad != null ? fmt.pad : hlPad);
 }
 
 function onFormatAction(event) {
@@ -1399,7 +1437,7 @@ function onKeyDown(event) {
 
   if (accel && event.shiftKey && key === 'h') {
     event.preventDefault();
-    toggleFormat('bg', hlColor, { refit: false });
+    toggleHighlight();
     return;
   }
   // Only ever hijack B and I for the page, never for the text being typed.
@@ -1482,7 +1520,7 @@ function wire() {
     saveState();
   });
 
-  els.highlight.addEventListener('click', () => toggleFormat('bg', hlColor, { refit: false }));
+  els.highlight.addEventListener('click', () => toggleHighlight());
 
   // The colour pickers fire continuously while the wheel is dragged, and each
   // one is a re-render; a colour changes no geometry, so no re-fit either.
@@ -1492,7 +1530,13 @@ function wire() {
     pickFg();
   });
 
-  const pickBg = debounce(() => applyFormat({ bg: hlColor }, { refit: false }), 120);
+  const pickBg = debounce(() => applyFormat({ bg: hlColor, pad: padMark(hlPad) }, { refit: false }), 120);
+  els.fmtPad.addEventListener('change', () => {
+    const pad = Math.max(0, Math.min(20, Math.round(Number(els.fmtPad.value)) || 0));
+    els.fmtPad.value = String(pad);
+    setHighlightPad(pad);
+  });
+
   els.fmtBg.addEventListener('input', () => {
     hlColor = els.fmtBg.value; // also becomes what the toolbar button applies
     pickBg();

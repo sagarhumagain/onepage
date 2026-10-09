@@ -395,6 +395,26 @@ async function main() {
   );
   check('the bar shows it as on, and the export carries it', banded.pressed === 'true' && /doc-band/.test(banded.exported));
 
+  const padded = await run(
+    win,
+    `
+    window.__onepage.select(0, 0, null);
+    await new Promise(r => setTimeout(r, 80));
+    const pad = document.getElementById('fmt-pad');
+    pad.value = '6';
+    pad.dispatchEvent(new Event('change', { bubbles: true }));
+    await new Promise(r => setTimeout(r, 300));
+    ${PROBE}
+    const mark = body.querySelector('h1 mark');
+    return { style: mark ? mark.getAttribute('style') : '', shown: pad.value };
+  `
+  );
+  check(
+    'the padding control pads the highlight, mostly sideways',
+    /padding:0\.21em 0\.6em/.test(padded.style) && padded.shown === '6',
+    padded.style
+  );
+
   const cleared = await run(
     win,
     `

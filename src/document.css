@@ -300,8 +300,10 @@
 
 /*
  * The colour is written inline by the renderer, per mark, so a document can
- * carry more than one. Padding is horizontal only: a vertical pad would change
- * the line box and move every line below it.
+ * carry more than one, and so is the padding when the highlight was given one.
+ * The default here is horizontal only. Vertical padding on an inline box does
+ * not grow the line it sits on — it paints over the lines either side — which
+ * is why the renderer keeps it a small fraction of the horizontal.
  */
 .page-body mark {
   background: #ffe08a;
