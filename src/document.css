@@ -212,6 +212,15 @@
   vertical-align: top;
 }
 
+/*
+ * A table inside a cell is set at the table's size, not a size smaller again
+ * — the Word export sets every table at one size — and sits snug in its cell.
+ */
+.page-body table table {
+  font-size: 1em;
+  margin: 0.3em 0;
+}
+
 /* Column widths the source gave are the widths, not suggestions. */
 .page-body table[data-widths] {
   table-layout: fixed;

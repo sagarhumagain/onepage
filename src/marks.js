@@ -87,6 +87,8 @@ export function collectUnits(blocks) {
     else if (b.type === 'table') {
       const cells = b.cells || {};
       const cell = (sub, text) => {
+        // A cell a merge runs over is not drawn, so it has nothing to mark.
+        if (b.covered && b.covered[sub]) return;
         if (cells[sub]) cells[sub].forEach((inner) => visit(inner, i, true));
         else add(i, b, sub, text, 'cell', true);
       };

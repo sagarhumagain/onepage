@@ -23,7 +23,7 @@
  */
 
 import { tokenizeInline } from './inline.js';
-import { LIST_GLYPHS } from './parse.js';
+import { LIST_GLYPHS, MERGE_LEFT, MERGE_UP } from './parse.js';
 import { formatRange, storedMark } from './marks.js';
 import { SCALE } from './scale.js';
 import { extractRtfPictures } from './rtf.js';
@@ -197,6 +197,50 @@ const cellsOf = (tr) => [...tr.children].filter((c) => /^T[HD]$/.test(c.tagName.
 /** Own rows only: a table nested in a cell is that cell's content. */
 const rowsOf = (table) => [...table.querySelectorAll('tr')].filter((tr) => tr.closest('table') === table);
 
+/** A colspan or rowspan as a count; 0 is HTML's "to the end", which `limit` is. */
+function spanOf(td, name, limit) {
+  const raw = td.getAttribute(name);
+  if (raw == null || raw.trim() === '') return 1;
+  const n = Math.floor(Number(raw));
+  if (n === 0 && name === 'rowspan') return limit;
+  return Math.max(1, Math.min(limit, Number.isFinite(n) ? n : 1));
+}
+
+/**
+ * A table's rows as a square grid: each cell where it starts, and `<<` or `^^`
+ * in each grid position a merged cell runs over (see parse.js). A cell a
+ * row span carries down is placed before the next cell of that row is, so
+ * every cell lands in the column it is drawn in. A position nothing fills is
+ * null.
+ *
+ * @returns {{grid: (Element|string|null)[][], width: number}}
+ */
+function tableGrid(rows) {
+  const grid = rows.map(() => []);
+  rows.forEach((tr, r) => {
+    let c = 0;
+    for (const td of cellsOf(tr)) {
+      while (grid[r][c] !== undefined) c++;
+      const cols = spanOf(td, 'colspan', 1000);
+      const down = spanOf(td, 'rowspan', rows.length - r);
+      for (let i = 0; i < down; i++)
+        for (let k = 0; k < cols; k++) grid[r + i][c + k] = i ? MERGE_UP : k ? MERGE_LEFT : td;
+      c += cols;
+    }
+  });
+  const width = Math.max(0, ...grid.map((row) => row.length));
+  return { grid: grid.map((row) => Array.from({ length: width }, (_, c) => row[c] ?? null)), width };
+}
+
+/** Does a row span run down out of this grid row into the next? */
+const spansDown = (grid, r) => Boolean(grid[r + 1] && grid[r + 1].some((x) => x === MERGE_UP));
+
+/**
+ * A line that is already a row of a table inside this cell keeps its own line
+ * breaks one level down, `<br\>`, so they stay inside the inner cell.
+ */
+const nestBreaks = (text) => text.replace(/<br(\\*)>/gi, '<br$1\\>');
+
 /**
  * A cell's content as one line of a pipe table. A cell holding paragraphs or
  * a list keeps them, joined with `<br>` — a blank line between paragraphs
@@ -210,7 +254,7 @@ function joinCell(lines) {
       gap = out.length > 0;
       continue;
     }
-    const text = item.text.replace(/\s+$/, '').replace(/\n/g, '<br>');
+    const text = nestBreaks(item.text.replace(/\s+$/, '')).replace(/\n/g, '<br>');
     if (!text.trim()) continue;
     if (out) out += gap ? '<br><br>' : '<br>';
     out += text;
@@ -223,7 +267,9 @@ function joinCell(lines) {
 }
 
 const hasBlockContent = (td) =>
-  [...td.querySelectorAll('p, ul, ol, div, h1, h2, h3, h4, h5, h6, blockquote')].some((el) => el.closest('td, th') === td);
+  [...td.querySelectorAll('p, ul, ol, div, h1, h2, h3, h4, h5, h6, blockquote, table')].some(
+    (el) => (el.tagName.toUpperCase() === 'TABLE' ? el.parentElement.closest('td, th') : el.closest('td, th')) === td
+  );
 
 /** The attribute line a table's widths and rule colour are written back as. */
 function tableAttrLine(widths, border) {
@@ -236,27 +282,27 @@ function tableAttrLine(widths, border) {
 function walkTable(table, lines) {
   const rows = rowsOf(table);
   if (!rows.length) return false;
-  const width = Math.max(...rows.map((r) => cellsOf(r).length));
+  const { grid, width } = tableGrid(rows);
   if (width < 2) return false;
 
   const cell = (td) => {
+    if (td == null) return '';
+    if (typeof td === 'string') return td;
     if (!hasBlockContent(td)) return cellText(td);
     const inner = [];
     walk(td, inner, 0, null);
     return joinCell(inner);
   };
-  const row = (tr) => {
-    const cells = cellsOf(tr).map(cell);
-    while (cells.length < width) cells.push('');
-    return `| ${cells.join(' | ')} |`;
-  };
+  const row = (cells) => `| ${cells.map(cell).join(' | ')} |`;
 
-  // A table OnePage drew without a header row is written back without one.
-  const headless = table.getAttribute('data-head') === '0';
+  // A table OnePage drew without a header row is written back without one,
+  // and so is one whose first row runs down into the next: a header row
+  // stands apart from the body, so no cell of it can.
+  const headless = table.getAttribute('data-head') === '0' || spansDown(grid, 0);
   lines.push({ kind: 'gap' });
-  lines.push({ kind: 'block', text: headless ? `|${'  |'.repeat(width)}` : row(rows[0]) });
+  lines.push({ kind: 'block', text: headless ? `|${'  |'.repeat(width)}` : row(grid[0]) });
   lines.push({ kind: 'block', text: `|${' --- |'.repeat(width)}` });
-  for (const tr of headless ? rows : rows.slice(1)) lines.push({ kind: 'block', text: row(tr) });
+  for (const cells of headless ? grid : grid.slice(1)) lines.push({ kind: 'block', text: row(cells) });
   const widths = (table.getAttribute('data-widths') || '').trim().split(/\s+/).filter(Boolean).map(Number);
   const attrs = tableAttrLine(widths.length === width ? widths : null, toHex(table.getAttribute('data-border')));
   if (attrs) lines.push({ kind: 'block', text: attrs });
@@ -886,21 +932,13 @@ function wordTable(table, lines, ctx, styleOf) {
   const rows = rowsOf(table);
   if (!rows.length) return false;
 
-  const grid = rows.map((tr) => {
-    const out = [];
-    for (const td of cellsOf(tr)) {
-      out.push(td);
-      for (let k = 1; k < (Number(td.getAttribute('colspan')) || 1); k++) out.push(null);
-    }
-    return out;
-  });
-  const width = Math.max(...grid.map((r) => r.length));
+  const { grid, width } = tableGrid(rows);
   if (width < 2) return false;
 
   const cellOut = grid.map((r) =>
-    Array.from({ length: width }, (_, j) => {
-      const td = r[j];
+    r.map((td) => {
       if (!td) return { text: '', records: [], allBold: false, empty: true };
+      if (typeof td === 'string') return { text: td, records: [], allBold: false, empty: true };
       const st = styleOf(td);
       const bg = toHex(st.get('background')) || toHex(st.get('background-color')) || toHex(td.getAttribute('bgcolor'));
       const band = bg && bg !== '#ffffff' ? bg : null;
@@ -917,7 +955,8 @@ function wordTable(table, lines, ctx, styleOf) {
       }
       const merged = joinParagraphs(inner);
       const blocks = merged.filter((l) => l.kind === 'block');
-      const records = merged.flatMap((l) => (l.record ? [l.record] : []));
+      // A table inside the cell carries its rows' records as `records`.
+      const records = merged.flatMap((l) => (l.record ? [l.record] : l.records || []));
       const allBold =
         records.length > 0 &&
         records.every((r) => r.runs.every((x) => x.bold || !r.plain.slice(x.start, x.end).trim()));
@@ -934,27 +973,31 @@ function wordTable(table, lines, ctx, styleOf) {
 
   // A header row is one whose every filled cell is bold — Word does not say.
   const firstRow = rows[0];
+  // A first row that runs down into the next cannot be a header row.
   const header =
-    cellsOf(firstRow).some((c) => c.tagName.toUpperCase() === 'TH') ||
-    (rows.length > 1 && cellOut[0].some((c) => !c.empty) && cellOut[0].every((c) => c.empty || (c.allBold && c.simple)));
+    !spansDown(grid, 0) &&
+    (cellsOf(firstRow).some((c) => c.tagName.toUpperCase() === 'TH') ||
+      (rows.length > 1 && cellOut[0].some((c) => !c.empty) && cellOut[0].every((c) => c.empty || (c.allBold && c.simple))));
 
-  // Widths from the widest row that states them, as percentages.
+  // Each column's width from a cell that starts in it and spans no other, as
+  // percentages — a merged cell's width is several columns' together.
+  const pt = (td) => Number(td.getAttribute('width')) * 0.75 || toPt(styleOf(td).get('width')) || 0;
+  const single = (td) => td && typeof td !== 'string' && spanOf(td, 'colspan', 1000) === 1;
+  const w = Array.from({ length: width }, (_, j) => {
+    for (const r of grid) if (single(r[j]) && pt(r[j]) > 0) return pt(r[j]);
+    return 0;
+  });
   let widths = null;
-  for (const r of grid) {
-    if (r.length !== width || r.some((td) => !td)) continue;
-    const w = r.map((td) => Number(td.getAttribute('width')) * 0.75 || toPt(styleOf(td).get('width')) || 0);
-    if (w.every((x) => x > 0)) {
-      const total = w.reduce((a, b) => a + b, 0);
-      widths = w.map((x) => Math.round((x / total) * 1000) / 10);
-      break;
-    }
+  if (w.every((x) => x > 0)) {
+    const total = w.reduce((a, b) => a + b, 0);
+    widths = w.map((x) => Math.round((x / total) * 1000) / 10);
   }
 
   // The rule colour most cells use.
   const colours = new Map();
   for (const r of grid)
     for (const td of r) {
-      if (!td) continue;
+      if (!td || typeof td === 'string') continue;
       const border = styleOf(td).get('border') || styleOf(td).get('border-top') || styleOf(td).get('border-bottom') || '';
       for (const word of border.split(/\s+/)) {
         const hex = toHex(word);

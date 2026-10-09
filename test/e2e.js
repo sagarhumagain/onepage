@@ -271,6 +271,59 @@ assessment in <b>four districts</b> and identified three priority gaps.<o:p></o:
   console.log('\n  recovered source text:');
   for (const line of paste.text.split('\n').slice(0, 12)) console.log('    ' + line);
 
+  // --- Merged cells and tables inside tables -----------------------------
+  // A pasted table keeps its merges and a table inside one of its cells, and
+  // typing into the page reads both back into the same source.
+  const TABLE_HTML =
+    '<table><tr><th>Region</th><th colspan=2>Cases</th></tr>' +
+    '<tr><td rowspan=2>East</td><td>Jan</td><td>12</td></tr>' +
+    '<tr><td>Feb</td><td><p>By week:</p><table><tr><th>W1</th><th>W2</th></tr><tr><td>4</td><td>5</td></tr></table></td></tr></table>';
+
+  const tables = await win.webContents.executeJavaScript(`(async () => {
+    const src = document.getElementById('source');
+    src.value = '';
+    src.focus();
+    const dt = new DataTransfer();
+    dt.setData('text/html', ${JSON.stringify(TABLE_HTML)});
+    dt.setData('text/plain', 'Region Cases East Jan 12 Feb By week W1 W2 4 5');
+    src.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+    await new Promise(r => setTimeout(r, 900));
+    const body = document.getElementById('sheet').contentDocument.getElementById('page-body');
+    const before = src.value;
+    // An edit anywhere in the page writes the whole page back as source.
+    body.dispatchEvent(new InputEvent('input', { bubbles: true }));
+    await new Promise(r => setTimeout(r, 900));
+    return {
+      text: before,
+      after: src.value,
+      colspan: body.querySelectorAll('th[colspan="2"]').length,
+      rowspan: body.querySelectorAll('td[rowspan="2"]').length,
+      nested: body.querySelectorAll('td table').length,
+      nestedCells: [...body.querySelectorAll('td table td')].map((td) => td.textContent).join(','),
+      markersShown: /<<|\\^\\^/.test(body.textContent),
+    };
+  })()`);
+
+  const tablesOk =
+    tables.colspan === 1 &&
+    tables.rowspan === 1 &&
+    tables.nested === 1 &&
+    tables.nestedCells === '4,5' &&
+    !tables.markersShown &&
+    tables.after.trim() === tables.text.trim();
+  if (!tablesOk) failures++;
+
+  console.log('\n  MERGED AND NESTED TABLES');
+  console.log('  ' + '-'.repeat(66));
+  console.log('  colspan / rowspan cells        :', tables.colspan, '/', tables.rowspan, '(want 1 / 1)');
+  console.log('  nested tables / their cells    :', tables.nested, '/', tables.nestedCells, '(want 1 / 4,5)');
+  console.log('  merge markers drawn on the page:', tables.markersShown, '(want false)');
+  console.log('  page edit writes the same source:', tables.after.trim() === tables.text.trim());
+  console.log('  ' + '-'.repeat(66));
+  console.log(`  ${tablesOk ? 'PASS' : 'FAIL'}`);
+  for (const line of tables.text.split('\n')) console.log('    ' + line);
+  if (tables.after.trim() !== tables.text.trim()) for (const line of tables.after.split('\n')) console.log('  > ' + line);
+
   // The Word export is generated from the same fitted layout; verify it builds
   // and carries the exact A4 geometry Word itself writes.
   const docxBytes = await win.webContents.executeJavaScript('window.__onepage.docxBytes()');
