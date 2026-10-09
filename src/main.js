@@ -16,10 +16,10 @@ import { parse, wordCount, IMAGE_REF } from './parse.js';
 import { render } from './render.js';
 import { createFitter, A4 } from './fit.js';
 import { mountSheet, standaloneHtml } from './sheet.js';
-import { textFromPaste, htmlToText } from './clipboard.js';
+import { textFromPaste, htmlToText, richFromPaste, marksFromRecords } from './clipboard.js';
 import { TYPEFACES, resolveTypeface } from './scale.js';
 import { exportDocx, exportPdf, printSheet } from './exporters.js';
-import { applyMarks, storedMark, formatRange, clearRange, allHave, fmtAt, stepSize } from './marks.js';
+import { applyMarks, collectUnits, storedMark, formatRange, clearRange, allHave, fmtAt, stepSize } from './marks.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -734,12 +734,26 @@ function readSelection() {
     if (!node.dataset || node.dataset.u == null) continue;
     const index = Number(node.dataset.u);
     if (!units[index]) continue;
-    const length = node.textContent.length;
+    const length = ownLength(node);
     const from = Math.max(start, base) - base;
     const to = Math.min(end, base + length) - base;
     if (to > from) out.push({ index, start: from, end: to });
   }
   return out.length ? out : null;
+}
+
+/**
+ * A unit's own length on the page. A list item's element also holds the list
+ * nested under it, whose items are units of their own; counting their text
+ * here would stretch the parent over its children.
+ */
+function ownLength(el) {
+  let length = el.textContent.length;
+  for (const child of el.children) {
+    const tag = child.tagName.toUpperCase();
+    if (tag === 'UL' || tag === 'OL') length -= child.textContent.length;
+  }
+  return length;
 }
 
 /** The text node and offset that a unit's character offset lands on. */
@@ -829,6 +843,7 @@ function enablePageEditing() {
   }
 
   body.addEventListener('input', onPageInput);
+  body.addEventListener('paste', onPagePaste);
   body.addEventListener('blur', () => settlePage());
 }
 
@@ -1232,6 +1247,14 @@ function insertAtCursor(textarea, text) {
 }
 
 function onPaste(event) {
+  // Word first: its clipboard can also carry a picture of the selection,
+  // which is not what was copied.
+  const rich = richFromPaste(event, { newImageId });
+  if (rich) {
+    event.preventDefault();
+    pasteRichIntoSource(rich);
+    return;
+  }
   if (handleImagePaste(event)) return;
   const text = textFromPaste(event);
   if (!text) return;
@@ -1239,6 +1262,83 @@ function onPaste(event) {
   insertAtCursor(els.source, text);
   commit('paste');
   update();
+  saveState();
+}
+
+/* --- Pasting from Word ---------------------------------------------------- */
+
+/**
+ * A document pasted into an empty page brings its own typeface and its single
+ * column with it: that is how it looked where it was copied from. Pasted into
+ * an existing document, it takes that document's settings instead.
+ */
+function adoptPastedSettings(rich) {
+  const face = rich.typeface && TYPEFACES[rich.typeface] ? rich.typeface : null;
+  if (face) els.typeface.value = face;
+  els.columns.value = '1';
+}
+
+/** A Word paste's pictures and formatting, once its text is in the source. */
+function applyRichPaste(rich, unitsBefore) {
+  Object.assign(images, rich.images);
+  const all = collectUnits(parse(els.source.value));
+  marks.push(...marksFromRecords(all, rich.records, unitsBefore, rich.basePt));
+}
+
+/** Paste into the source pane: a block of its own at the cursor. */
+function pasteRichIntoSource(rich) {
+  const ta = els.source;
+  const wasEmpty = !ta.value.trim();
+  const at = ta.selectionStart == null ? ta.value.length : ta.selectionStart;
+  const to = ta.selectionEnd == null ? at : ta.selectionEnd;
+  const before = ta.value.slice(0, at).replace(/\s+$/, '');
+  const after = ta.value.slice(to).replace(/^\s+/, '');
+  ta.value = [before, rich.text, after].filter((p) => p !== '').join('\n\n');
+  const caret = (before ? before.length + 2 : 0) + rich.text.length;
+  ta.setSelectionRange(caret, caret);
+
+  applyRichPaste(rich, before ? collectUnits(parse(before)).length : 0);
+  if (wasEmpty) adoptPastedSettings(rich);
+  commit('paste');
+  update();
+  saveState();
+}
+
+/**
+ * Paste into the page: the pasted document is drawn after the block the caret
+ * is in, and the page is then read back into the source like any other edit.
+ * Left to itself the browser would paste Word's HTML as it is — every style
+ * Word wrote, inline.
+ */
+async function onPagePaste(event) {
+  const rich = richFromPaste(event, { newImageId });
+  if (!rich) return;
+  event.preventDefault();
+
+  const wasEmpty = !els.source.value.trim();
+  Object.assign(images, rich.images);
+  const holder = sheetRefs.doc.createElement('div');
+  holder.innerHTML = render(parse(rich.text).map((b) => (b.type === 'image' ? imageBlock(b.id) : b)));
+  const nodes = [...holder.childNodes].filter((n) => n.nodeType === 1);
+  if (!nodes.length) return;
+
+  const anchor = blockAtCaret();
+  const before = anchor ? anchor.nextSibling : null;
+  for (const node of nodes) sheetRefs.body.insertBefore(node, before);
+
+  // Units above the paste are the ones already numbered on the page.
+  let unitsBefore = 0;
+  for (const el of sheetRefs.body.querySelectorAll('[data-u]')) {
+    if (nodes[0].compareDocumentPosition(el) & 2 /* preceding */) unitsBefore++;
+  }
+
+  // One history step for the whole paste: the text, its pictures and its marks.
+  pageDirty = true;
+  els.source.value = sourceFromPage();
+  applyRichPaste(rich, unitsBefore);
+  if (wasEmpty) adoptPastedSettings(rich);
+  commit('paste');
+  await settlePage();
   saveState();
 }
 

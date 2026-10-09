@@ -26,10 +26,22 @@
 
 import { plainText } from './inline.js';
 
-/** @typedef {{bg?:string, band?:string, fg?:string, size?:number, bold?:boolean, italic?:boolean}} Fmt */
+/**
+ * `bold: false` is meaningful: it is a heading, or a header cell, set in the
+ * regular weight its source used.
+ * @typedef {{bg?:string, band?:string, fg?:string, size?:number, bold?:boolean, italic?:boolean,
+ *   underline?:boolean, align?:string, valign?:string}} Fmt
+ */
 /** @typedef {{start:number, end:number, fmt:Fmt}} Mark */
 /** @typedef {{sig:string, nth:number, text:string, start:number, end:number, fmt:Fmt}} StoredMark */
-/** @typedef {{index:number, block:number, sub:string, plain:string, nth:number}} Unit */
+/**
+ * `block` is the top-level block the unit sits in; `node` is the block object
+ * that owns it, which is a block inside a table cell when the cell holds more
+ * than a line. `kind` is the element it renders as, and `inTable` says it is
+ * set at the table's size.
+ * @typedef {{index:number, block:number, node:object, sub:string, plain:string, nth:number,
+ *   kind:string, inTable:boolean}} Unit
+ */
 
 const MARKABLE_TEXT = new Set(['h1', 'h2', 'h3', 'p', 'quote']);
 
@@ -50,7 +62,8 @@ export function stepSize(current, direction) {
  *
  * `sub` is the unit's address inside its block — 'text', 'items.2',
  * 'head.1', 'rows.3.0' — and is the key both the HTML and the Word renderer
- * use to look the unit's marks back up.
+ * use to look the unit's marks back up. A cell that holds paragraphs and
+ * lists is not a unit itself: each paragraph and item inside it is.
  *
  * @param {import('./parse.js').Block[]} blocks
  * @returns {Unit[]}
@@ -60,21 +73,27 @@ export function collectUnits(blocks) {
   const units = [];
   const seen = new Map();
 
-  const add = (block, sub, text) => {
+  const add = (block, node, sub, text, kind, inTable) => {
     const plain = plainText(text);
     const nth = seen.get(plain) || 0;
     seen.set(plain, nth + 1);
-    units.push({ index: units.length, block, sub, plain, nth });
+    units.push({ index: units.length, block, node, sub, plain, nth, kind, inTable });
   };
 
-  blocks.forEach((b, i) => {
-    if (MARKABLE_TEXT.has(b.type)) add(i, 'text', b.text);
-    else if (b.type === 'ul' || b.type === 'ol') (b.items || []).forEach((it, j) => add(i, `items.${j}`, it));
+  const visit = (b, i, inTable) => {
+    if (MARKABLE_TEXT.has(b.type)) add(i, b, 'text', b.text, b.type, inTable);
+    else if (b.type === 'ul' || b.type === 'ol') (b.items || []).forEach((it, j) => add(i, b, `items.${j}`, it, 'li', inTable));
     else if (b.type === 'table') {
-      (b.head || []).forEach((c, j) => add(i, `head.${j}`, c));
-      (b.rows || []).forEach((row, r) => row.forEach((c, j) => add(i, `rows.${r}.${j}`, c)));
+      const cells = b.cells || {};
+      const cell = (sub, text) => {
+        if (cells[sub]) cells[sub].forEach((inner) => visit(inner, i, true));
+        else add(i, b, sub, text, 'cell', true);
+      };
+      if (!b.headless) (b.head || []).forEach((c, j) => cell(`head.${j}`, c));
+      (b.rows || []).forEach((row, r) => row.forEach((c, j) => cell(`rows.${r}.${j}`, c)));
     }
-  });
+  };
+  blocks.forEach((b, i) => visit(b, i, false));
 
   return units;
 }
@@ -111,9 +130,14 @@ function anchor(units, taken, m) {
 /**
  * `bg` is a highlighter: it hugs the words it is on. `band` is the whole
  * line's background — a section header bar — and is therefore only ever
- * applied to a complete unit, never to part of one.
+ * applied to a complete unit, never to part of one. The same is true of
+ * `align` and `valign`, which belong to the paragraph or the cell rather than
+ * to any of its words.
  */
-const KEYS = ['bg', 'band', 'fg', 'size', 'bold', 'italic'];
+const KEYS = ['bg', 'band', 'fg', 'size', 'bold', 'italic', 'underline', 'align', 'valign'];
+
+/** Properties of the whole unit; see above. */
+export const UNIT_KEYS = ['band', 'align', 'valign'];
 
 const isEmptyFmt = (fmt) => !fmt || !KEYS.some((k) => fmt[k] != null);
 
@@ -211,8 +235,9 @@ export function fmtAt(marks, at) {
 /**
  * Blocks gain two private fields, both keyed by the unit's `sub` address:
  * `_marks` (the runs to paint) and `_u` (the unit index, which the preview
- * uses to turn a DOM selection back into a mark). Blocks are rebuilt on every
- * keystroke, so writing to them is safe.
+ * uses to turn a DOM selection back into a mark). They are written to the
+ * block that owns the unit — a block inside a cell, for a cell's paragraphs.
+ * Blocks are rebuilt on every keystroke, so writing to them is safe.
  *
  * @param {import('./parse.js').Block[]} blocks
  * @param {StoredMark[]} stored
@@ -224,7 +249,7 @@ export function applyMarks(blocks, stored) {
   const byUnit = new Map();
 
   for (const u of units) {
-    const b = blocks[u.block];
+    const b = u.node;
     if (!b._u) b._u = {};
     b._u[u.sub] = u.index;
     u.marks = [];
@@ -248,7 +273,7 @@ export function applyMarks(blocks, stored) {
     const marks = normaliseMarks(list, u.plain.length);
     if (!marks.length) continue;
     u.marks = marks;
-    const b = blocks[u.block];
+    const b = u.node;
     if (!b._marks) b._marks = {};
     b._marks[u.sub] = marks;
   }

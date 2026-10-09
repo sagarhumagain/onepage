@@ -22,6 +22,11 @@ const PATTERNS = [
     make: (m) => ({ text: m[1], italic: true }),
   },
   {
+    // [text](url) — a link whose words are not its address, as Word's are.
+    re: /\[([^[\]\n]+)\]\(((?:https?:\/\/|mailto:)[^\s()<>]+)\)/,
+    make: (m) => ({ text: m[1], href: m[2] }),
+  },
+  {
     re: /\bhttps?:\/\/[^\s<>()]+/,
     make: (m) => ({ text: m[0], href: m[0] }),
   },

@@ -118,6 +118,32 @@
   margin-bottom: 0;
 }
 
+/* A list inside an item is part of that item, not a new paragraph. */
+.page-body li > ul,
+.page-body li > ol {
+  margin: 0.24em 0 0;
+}
+
+/* A bullet is a disc at every depth, as Word draws one; any other mark is a
+   glyph the list names itself. */
+.page-body li ul {
+  list-style-type: disc;
+}
+
+/* A bullet drawn as written — a tick, an arrowhead — rather than a disc. */
+.page-body li[data-glyph]::marker {
+  content: attr(data-glyph) '\00a0\00a0';
+}
+
+/*
+ * A hard line break. It is a real newline in the text, preserved here, so the
+ * break counts as one character exactly as it does in the source — a <br>
+ * would count as none and shift every offset after it.
+ */
+.page-body .doc-br {
+  white-space: pre;
+}
+
 .page-body blockquote {
   margin: 0.7em 0;
   padding: 0.1em 0 0.1em 0.85em;
@@ -176,10 +202,29 @@
 
 .page-body th,
 .page-body td {
-  border: 1px solid var(--doc-rule);
+  /* A table can name its own rule colour; Word's are usually black. */
+  border: 1px solid var(--table-rule, var(--doc-rule));
   padding: 0.3em 0.45em;
   text-align: left;
   vertical-align: top;
+}
+
+/* Column widths the source gave are the widths, not suggestions. */
+.page-body table[data-widths] {
+  table-layout: fixed;
+}
+
+/* A cell holding paragraphs and lists: their spacing between, none outside. */
+.page-body .doc-cell > :first-child {
+  margin-top: 0;
+}
+
+.page-body .doc-cell > :last-child {
+  margin-bottom: 0;
+}
+
+.page-body .doc-cell p {
+  margin-bottom: 0.4em;
 }
 
 .page-body th {

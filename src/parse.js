@@ -1,16 +1,31 @@
 /**
  * parse.js — plain text -> structured document model.
  *
- * The app deliberately discards source formatting on paste and rebuilds the
- * document from the text alone. That keeps output consistent, makes the
+ * The text is the document of record: structure is written in it, and
+ * everything a reader would call *styling* — a colour, a size, a band — lives
+ * beside it as marks (see marks.js). That keeps output consistent, makes the
  * auto-fit engine the single owner of typography, and lets the DOCX/PDF
  * exporters emit exact values instead of guessing at Word's intent.
  */
 
 /** @typedef {{type:'h1'|'h2'|'h3'|'p'|'quote'|'code', text:string}} TextBlock */
-/** @typedef {{type:'ul'|'ol', items:string[], start?:number}} ListBlock */
+/**
+ * A list. `levels`, `kinds`, `glyphs`, `nums` and `styles` are parallel to
+ * `items` and present only when the list is more than a flat run of one kind
+ * of marker — so a plain list is exactly the shape it always was, and every
+ * item is still addressed as `items.N` however deep it sits.
+ * @typedef {{type:'ul'|'ol', items:string[], start?:number, levels?:number[],
+ *   kinds?:('ul'|'ol')[], glyphs?:(string|null)[], nums?:(number|null)[],
+ *   styles?:(string|null)[]}} ListBlock
+ */
 /** @typedef {{type:'hr'}} RuleBlock */
-/** @typedef {{type:'table', head:string[], rows:string[][]}} TableBlock */
+/**
+ * `cells` holds the parsed content of any cell that is more than one line of
+ * text, keyed by its address ('head.1', 'rows.2.0'). `headless` is a table
+ * whose header row is empty: the convention for a table that has none.
+ * @typedef {{type:'table', head:string[], rows:string[][], headless?:boolean,
+ *   widths?:number[], border?:string, cells?:Object<string, Block[]>}} TableBlock
+ */
 /** @typedef {{type:'image', id:string}} ImageRef */
 /** @typedef {TextBlock|ListBlock|RuleBlock|TableBlock|ImageRef} Block */
 
@@ -26,6 +41,22 @@ const C = {
   BLACK_SQUARE: 0x25aa,
   EN_DASH: 0x2013,
   EM_DASH: 0x2014,
+  CHECK: 0x2713,
+  HEAVY_CHECK: 0x2714,
+  BALLOT_X: 0x2717,
+  HEAVY_BALLOT_X: 0x2718,
+  ARROWHEAD: 0x27a2,
+  HEAVY_ARROW: 0x27a4,
+  POINTER: 0x25ba,
+  SMALL_TRIANGLE: 0x25b8,
+  DIAMOND_CROSS: 0x2756,
+  SHADOWED_SQUARE: 0x2751,
+  LARGE_SQUARE: 0x25a0,
+  WHITE_SQUARE: 0x25a1,
+  BLACK_CIRCLE: 0x25cf,
+  WHITE_CIRCLE: 0x25cb,
+  BLACK_DIAMOND: 0x25c6,
+  WHITE_DIAMOND: 0x25c7,
   ZWSP: 0x200b,
   ZWJ: 0x200d,
   BOM: 0xfeff,
@@ -35,7 +66,18 @@ const C = {
   DEVANAGARI_HI: 0x097f,
 };
 
-const BULLET_CHARS = ch(C.BULLET, C.MIDDOT, C.TRIANGLE_BULLET, C.BLACK_SQUARE, C.WHITE_BULLET, C.EN_DASH, C.EM_DASH);
+/** Markers that mean "a bullet", whichever one: they all render as the default disc. */
+const PLAIN_BULLETS = ch(C.BULLET, C.MIDDOT, C.EN_DASH, C.EM_DASH);
+/**
+ * Markers that are themselves the formatting — a checklist of ticks, Word's
+ * arrowheads and squares. These are kept and drawn as written.
+ */
+export const LIST_GLYPHS = ch(
+  C.TRIANGLE_BULLET, C.BLACK_SQUARE, C.WHITE_BULLET, C.CHECK, C.HEAVY_CHECK, C.BALLOT_X, C.HEAVY_BALLOT_X,
+  C.ARROWHEAD, C.HEAVY_ARROW, C.POINTER, C.SMALL_TRIANGLE, C.DIAMOND_CROSS, C.SHADOWED_SQUARE,
+  C.LARGE_SQUARE, C.WHITE_SQUARE, C.BLACK_CIRCLE, C.WHITE_CIRCLE, C.BLACK_DIAMOND, C.WHITE_DIAMOND
+);
+const BULLET_CHARS = PLAIN_BULLETS + LIST_GLYPHS;
 const ZERO_WIDTH = new RegExp('[' + ch(C.ZWSP) + '-' + ch(C.ZWJ) + ch(C.BOM) + ']', 'g');
 const LINE_SEPS = new RegExp('[' + ch(C.LINE_SEP, C.PARA_SEP) + ']', 'g');
 const NBSP_RE = new RegExp(ch(C.NBSP), 'g');
@@ -47,6 +89,16 @@ const STARTS_UPPER = new RegExp('^[A-Z' + ch(C.DEVANAGARI_LO) + '-' + ch(C.DEVAN
 const BULLET_RE = new RegExp('^[ \\t]*[-*+' + BULLET_CHARS + ']\\s+(.*)$');
 const ORDERED = /^[ \t]*(\d{1,3})[.)]\s+(.*)$/;
 const ORDERED_ALPHA = /^[ \t]*[a-zA-Z][.)]\s+(.*)$/;
+/** Any list item: its indent, then a bullet, a number or a letter. */
+const LIST_LINE = new RegExp('^([ \\t]*)(?:([-*+' + BULLET_CHARS + '])|(\\d{1,3})[.)]|([a-zA-Z])[.)])\\s+(.*)$');
+const CELL_BULLET = new RegExp('^[-*+' + BULLET_CHARS + ']\\s+\\S');
+/** A line ending in a backslash breaks the line without ending the paragraph. */
+const HARD_BREAK = /\\$/;
+/** Attributes for the block above, kramdown style: `{: widths="20 80"}`. */
+const ATTRS = /^[ \t]*\{:\s*([^}]*)\}[ \t]*$/;
+/** Inside a table cell, `<br>` is the line separator — as it is in GitHub's tables. */
+const CELL_BREAK = /<br\s*\/?>/gi;
+const HEX_COLOR = /^#[0-9a-f]{6}$/i;
 const ATX = /^(#{1,6})\s+(.*?)\s*#*$/;
 const RULE = /^[ \t]*([-*_=])\1{2,}[ \t]*$/;
 const QUOTE = /^[ \t]*>\s?(.*)$/;
@@ -82,6 +134,8 @@ function looksLikeHeading(line, next) {
   if (t.length === 0 || t.length > 90) return false;
   if (!HAS_LETTER.test(t)) return false;
   if (/[.,;:!?]$/.test(t)) return false;
+  // A line that ends in a hard break is the first line of a paragraph.
+  if (HARD_BREAK.test(t)) return false;
   if (BULLET_RE.test(line) || ORDERED.test(line)) return false;
 
   const words = t.split(/\s+/);
@@ -136,29 +190,86 @@ function isNumberedHeading(lines, i) {
   return true;
 }
 
+/**
+ * Cells split on pipes that are not escaped; `\|` is a pipe inside a cell,
+ * which is how the clipboard walker writes one.
+ */
 const splitRow = (line) =>
   line
     .trim()
     .replace(/^\|/, '')
-    .replace(/\|$/, '')
-    .split('|')
-    .map((c) => c.trim());
+    .replace(/(?<!\\)\|$/, '')
+    .split(/(?<!\\)\|/)
+    .map((c) => c.trim().replace(/\\\|/g, '|'));
+
+/** Columns of indentation, a tab counting as four. */
+const indentOf = (ws) => ws.replace(/\t/g, '    ').length;
+
+/** Join a paragraph's lines: a soft wrap is a space, a hard break stays a line break. */
+function joinLines(buf, hard) {
+  let out = '';
+  for (const line of buf) {
+    const l = line.replace(/\s+/g, ' ').trim();
+    if (!out) out = l;
+    else if (hard || HARD_BREAK.test(out)) out = `${out.replace(HARD_BREAK, '')}\n${l}`;
+    else out = `${out} ${l}`;
+  }
+  return out;
+}
+
+/** `key="value"` pairs from an attribute line. Only the keys a table understands survive. */
+function tableAttrs(line) {
+  const out = {};
+  const body = line.match(ATTRS)[1];
+  for (const m of body.matchAll(/([a-z]+)\s*=\s*"([^"]*)"/gi)) {
+    const key = m[1].toLowerCase();
+    if (key === 'widths') {
+      const widths = m[2].trim().split(/\s+/).map(Number);
+      if (widths.length && widths.every((w) => w > 0 && w <= 100)) out.widths = widths;
+    } else if (key === 'border' && HEX_COLOR.test(m[2].trim())) {
+      out.border = m[2].trim().toLowerCase();
+    }
+  }
+  return out;
+}
+
+/**
+ * A list item's marker, as the parts the model keeps: which kind of list, the
+ * glyph if it is one that should be drawn as written, and the number.
+ */
+function listMarker(m) {
+  if (m[2]) return { kind: 'ul', glyph: LIST_GLYPHS.includes(m[2]) ? m[2] : null, num: null, style: null };
+  if (m[3]) return { kind: 'ol', glyph: null, num: parseInt(m[3], 10), style: null };
+  const letter = m[4];
+  const upper = letter === letter.toUpperCase();
+  return {
+    kind: 'ol',
+    glyph: null,
+    num: letter.toLowerCase().charCodeAt(0) - 96,
+    style: upper ? 'upper-alpha' : 'lower-alpha',
+  };
+}
 
 /**
  * @param {string} raw
+ * @param {{cell?: boolean}} [opts] — `cell`: the content of one table cell.
+ *   A cell has no title and no inferred headings, and each of its lines is a
+ *   line: `<br>` in a table cell means a line break, as it does on GitHub.
  * @returns {Block[]}
  */
-export function parse(raw) {
+export function parse(raw, opts = {}) {
+  const cell = Boolean(opts.cell);
   const text = normalize(raw);
   if (!text) return [];
   const lines = text.split('\n');
   /** @type {Block[]} */
   const blocks = [];
   let i = 0;
-  let sawTitle = false;
+  let sawTitle = cell;
+  const headingLike = (line, next) => !cell && looksLikeHeading(line, next);
 
   const pushPara = (buf) => {
-    const joined = buf.join(' ').replace(/\s+/g, ' ').trim();
+    const joined = joinLines(buf, cell);
     if (joined) blocks.push({ type: 'p', text: joined });
   };
 
@@ -170,7 +281,7 @@ export function parse(raw) {
       continue;
     }
 
-    const imageRef = line.match(IMAGE_REF);
+    const imageRef = !cell && line.match(IMAGE_REF);
     if (imageRef) {
       blocks.push({ type: 'image', id: imageRef[1] });
       i++;
@@ -195,14 +306,16 @@ export function parse(raw) {
     }
 
     // Markdown-ish table: header row followed by a divider row.
-    if (line.includes('|') && i + 1 < lines.length && TABLE_DIVIDER.test(lines[i + 1])) {
+    if (!cell && line.includes('|') && i + 1 < lines.length && TABLE_DIVIDER.test(lines[i + 1])) {
       const head = splitRow(line);
       i += 2;
       const rows = [];
-      while (i < lines.length && lines[i].includes('|') && !isBlank(lines[i])) {
+      while (i < lines.length && lines[i].includes('|') && !isBlank(lines[i]) && !ATTRS.test(lines[i])) {
         rows.push(splitRow(lines[i++]));
       }
-      blocks.push({ type: 'table', head, rows });
+      const table = { type: 'table', head, rows };
+      if (i < lines.length && ATTRS.test(lines[i])) Object.assign(table, tableAttrs(lines[i++]));
+      blocks.push(table);
       continue;
     }
 
@@ -217,7 +330,7 @@ export function parse(raw) {
     }
 
     // Setext heading: text underlined with === or ---
-    if (i + 1 < lines.length && SETEXT.test(lines[i + 1])) {
+    if (!cell && i + 1 < lines.length && SETEXT.test(lines[i + 1])) {
       const level = lines[i + 1].trim()[0] === '=' ? 1 : 2;
       blocks.push({ type: `h${level}`, text: line.trim() });
       sawTitle = sawTitle || level === 1;
@@ -229,52 +342,52 @@ export function parse(raw) {
     if (QUOTE.test(line)) {
       const buf = [];
       while (i < lines.length && QUOTE.test(lines[i])) buf.push(lines[i++].match(QUOTE)[1]);
-      blocks.push({ type: 'quote', text: buf.join(' ').replace(/\s+/g, ' ').trim() });
+      blocks.push({ type: 'quote', text: joinLines(buf, false) });
       continue;
     }
 
-    if (isNumberedHeading(lines, i)) {
+    if (!cell && isNumberedHeading(lines, i)) {
       blocks.push({ type: `h${headingLevel(line)}`, text: line.trim() });
       i++;
       continue;
     }
 
-    // Lists. Continuation lines without a marker belong to the previous item.
-    if (BULLET_RE.test(line) || ORDERED.test(line) || ORDERED_ALPHA.test(line)) {
-      const ordered = !BULLET_RE.test(line);
-      const startMatch = line.match(ORDERED);
+    // Lists. Indentation nests an item under the one above it; a line with no
+    // marker continues the previous item.
+    if (LIST_LINE.test(line)) {
       const items = [];
+      const levels = [];
+      const markers = [];
+      const stack = [];
       while (i < lines.length && !isBlank(lines[i])) {
         const l = lines[i];
-        const b = l.match(BULLET_RE);
-        const o = l.match(ORDERED);
-        const oa = l.match(ORDERED_ALPHA);
-        const isMarker = ordered ? !!(o || oa) : !!b;
-        if (isMarker) {
-          items.push((b ? b[1] : o ? o[2] : oa[1]).trim());
+        const m = l.match(LIST_LINE);
+        if (m) {
+          const indent = indentOf(m[1]);
+          if (!stack.length || indent > stack[stack.length - 1]) stack.push(indent);
+          else while (stack.length > 1 && indent < stack[stack.length - 1]) stack.pop();
+          items.push(m[5].trim());
+          levels.push(stack.length - 1);
+          markers.push(listMarker(m));
         } else if (
           items.length &&
-          !looksLikeHeading(l, lines[i + 1]) &&
+          !headingLike(l, lines[i + 1]) &&
           !ATX.test(l) &&
           !QUOTE.test(l) &&
           !IMAGE_REF.test(l)
         ) {
-          items[items.length - 1] += ' ' + l.trim();
+          items[items.length - 1] = joinLines([items[items.length - 1], l], false);
         } else break;
         i++;
       }
-      if (items.length) {
-        const blk = { type: ordered ? 'ol' : 'ul', items };
-        if (ordered && startMatch) blk.start = parseInt(startMatch[1], 10);
-        blocks.push(blk);
-      }
+      if (items.length) blocks.push(listBlock(items, levels, markers));
       continue;
     }
 
     // The first non-empty line becomes the document title if it reads like one.
     if (!sawTitle && blocks.length === 0) {
       const t = line.trim();
-      if (t.length <= 90 && !/[.,;:]$/.test(t) && t.split(/\s+/).length <= 16) {
+      if (t.length <= 90 && !/[.,;:\\]$/.test(t) && t.split(/\s+/).length <= 16) {
         blocks.push({ type: 'h1', text: t });
         sawTitle = true;
         i++;
@@ -282,7 +395,7 @@ export function parse(raw) {
       }
     }
 
-    if (looksLikeHeading(line, lines[i + 1])) {
+    if (headingLike(line, lines[i + 1])) {
       blocks.push({ type: `h${headingLevel(line)}`, text: line.trim() });
       i++;
       continue;
@@ -294,16 +407,17 @@ export function parse(raw) {
       const l = lines[i];
       if (
         buf.length &&
-        (BULLET_RE.test(l) ||
-          ORDERED.test(l) ||
+        (LIST_LINE.test(l) ||
           ATX.test(l) ||
           RULE.test(l) ||
           QUOTE.test(l) ||
           FENCE.test(l) ||
-          IMAGE_REF.test(l))
+          (!cell && IMAGE_REF.test(l)))
       )
         break;
-      if (buf.length && looksLikeHeading(l, lines[i + 1])) break;
+      // After a hard break the next line belongs to this paragraph, however
+      // much it looks like a heading on its own.
+      if (buf.length && !HARD_BREAK.test(buf[buf.length - 1]) && headingLike(l, lines[i + 1])) break;
       buf.push(l.trim());
       i++;
     }
@@ -313,7 +427,32 @@ export function parse(raw) {
   return tidy(blocks);
 }
 
+/**
+ * A plain run of one kind of marker keeps the list's original, flat shape;
+ * anything richer carries the parallel arrays that describe it.
+ */
+function listBlock(items, levels, markers) {
+  const first = markers[0];
+  const block = { type: first.kind, items };
+  if (first.kind === 'ol' && first.num != null && !first.style) block.start = first.num;
+
+  const flat =
+    levels.every((l) => l === 0) &&
+    markers.every((m) => m.kind === first.kind && !m.glyph && !m.style);
+  if (flat) return block;
+
+  block.levels = levels;
+  block.kinds = markers.map((m) => m.kind);
+  block.glyphs = markers.map((m) => m.glyph);
+  block.nums = markers.map((m) => m.num);
+  block.styles = markers.map((m) => m.style);
+  return block;
+}
+
 const FULL_BOLD = /^\*\*([\s\S]+)\*\*$/;
+
+/** A cell holds more than a line of text when it has line breaks, or opens with a bullet. */
+const isRichCell = (text) => /<br\s*\/?>/i.test(text) || CELL_BULLET.test(text);
 
 /**
  * Remove emphasis that the surrounding element already provides.
@@ -337,6 +476,17 @@ function tidy(blocks) {
       // same cells.
       const cols = b.head.length;
       if (cols) b.rows = (b.rows || []).map((r) => Array.from({ length: cols }, (_, j) => r[j] || ''));
+      if (b.widths && b.widths.length !== cols) delete b.widths;
+      if (cols && b.head.every((c) => !c.trim())) b.headless = true;
+
+      // A cell with more than a line in it is a small document of its own.
+      const cells = {};
+      const visit = (text, address) => {
+        if (isRichCell(text)) cells[address] = parse(text.replace(CELL_BREAK, '\n'), { cell: true });
+      };
+      if (!b.headless) b.head.forEach((c, j) => visit(c, `head.${j}`));
+      b.rows.forEach((r, ri) => r.forEach((c, j) => visit(c, `rows.${ri}.${j}`)));
+      if (Object.keys(cells).length) b.cells = cells;
     }
   }
   return blocks;
