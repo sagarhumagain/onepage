@@ -21,6 +21,9 @@
   --doc-bg: #ffffff;
   /* The fitter's last lever before type goes below the readable floor. */
   --doc-image-scale: 1;
+  /* The footer strip and the gap above it, mm. Mirrors footer.js. */
+  --footer-mm: 20;
+  --footer-gap-mm: 3;
 
   position: relative;
   box-sizing: border-box;
@@ -294,6 +297,50 @@
   color: var(--doc-muted);
   margin-top: 0.25em;
   text-align: center;
+}
+
+/* --- Footer ------------------------------------------------------------ */
+
+/*
+ * Two pictures pinned to the foot of the page, inside the margins. The footer
+ * is positioned, not in the flow, and the measured text box is shortened by
+ * exactly its strip — so the fitter sees the smaller area and fits to it, and
+ * the text box stays an ordinary box of definite height in one column or
+ * three. With no picture in it the attribute is off and nothing here applies.
+ */
+.page[data-footer='1'] .page-body {
+  height: calc(100% - (var(--footer-mm) + var(--footer-gap-mm)) * 1mm);
+}
+
+.page-footer {
+  position: absolute;
+  left: calc(var(--doc-margin-mm) * 1mm);
+  right: calc(var(--doc-margin-mm) * 1mm);
+  bottom: calc(var(--doc-margin-mm) * 1mm);
+  height: calc(var(--footer-mm) * 1mm);
+  display: none;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.page[data-footer='1'] .page-footer {
+  display: flex;
+}
+
+.page-footer .footer-slot {
+  margin: 0;
+  height: 100%;
+  max-width: 48%;
+  display: flex;
+  align-items: center;
+}
+
+.page-footer .footer-slot img {
+  display: block;
+  height: 100%;
+  width: auto;
+  max-width: 100%;
+  object-fit: contain;
 }
 
 /* --- Highlights -------------------------------------------------------- */
