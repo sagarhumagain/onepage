@@ -91,7 +91,6 @@ const ORDERED = /^[ \t]*(\d{1,3})[.)]\s+(.*)$/;
 const ORDERED_ALPHA = /^[ \t]*[a-zA-Z][.)]\s+(.*)$/;
 /** Any list item: its indent, then a bullet, a number or a letter. */
 const LIST_LINE = new RegExp('^([ \\t]*)(?:([-*+' + BULLET_CHARS + '])|(\\d{1,3})[.)]|([a-zA-Z])[.)])\\s+(.*)$');
-const CELL_BULLET = new RegExp('^[-*+' + BULLET_CHARS + ']\\s+\\S');
 /** A line ending in a backslash breaks the line without ending the paragraph. */
 const HARD_BREAK = /\\$/;
 /** Attributes for the block above, kramdown style: `{: widths="20 80"}`. */
@@ -209,12 +208,13 @@ const indentOf = (ws) => ws.replace(/\t/g, '    ').length;
 function joinLines(buf, hard) {
   let out = '';
   for (const line of buf) {
-    const l = line.replace(/\s+/g, ' ').trim();
+    const l = line.replace(/[ \t]+/g, ' ').trim();
     if (!out) out = l;
     else if (hard || HARD_BREAK.test(out)) out = `${out.replace(HARD_BREAK, '')}\n${l}`;
     else out = `${out} ${l}`;
   }
-  return out;
+  // A break with nothing after it breaks nothing.
+  return out.replace(HARD_BREAK, '');
 }
 
 /** `key="value"` pairs from an attribute line. Only the keys a table understands survive. */
@@ -376,11 +376,16 @@ export function parse(raw, opts = {}) {
           !QUOTE.test(l) &&
           !IMAGE_REF.test(l)
         ) {
-          items[items.length - 1] = joinLines([items[items.length - 1], l], false);
+          // Join onto the item as it stands, so a break written two lines up
+          // is still there; a trailing break is trimmed once the list ends.
+          const prev = items[items.length - 1];
+          items[items.length - 1] = HARD_BREAK.test(prev)
+            ? `${prev.replace(HARD_BREAK, '')}\n${l.replace(/[ \t]+/g, ' ').trim()}`
+            : `${prev} ${l.replace(/[ \t]+/g, ' ').trim()}`;
         } else break;
         i++;
       }
-      if (items.length) blocks.push(listBlock(items, levels, markers));
+      if (items.length) blocks.push(listBlock(items.map((it) => it.replace(HARD_BREAK, '')), levels, markers));
       continue;
     }
 
@@ -405,9 +410,15 @@ export function parse(raw, opts = {}) {
     const buf = [];
     while (i < lines.length && !isBlank(lines[i])) {
       const l = lines[i];
+      // A line after a hard break belongs to this paragraph whatever it looks
+      // like. Only a bullet or a number starts a list mid-paragraph; a letter
+      // would end "written by" at "J. K. Rowling".
+      const afterBreak = buf.length && HARD_BREAK.test(buf[buf.length - 1]);
       if (
         buf.length &&
-        (LIST_LINE.test(l) ||
+        !afterBreak &&
+        (BULLET_RE.test(l) ||
+          ORDERED.test(l) ||
           ATX.test(l) ||
           RULE.test(l) ||
           QUOTE.test(l) ||
@@ -417,7 +428,7 @@ export function parse(raw, opts = {}) {
         break;
       // After a hard break the next line belongs to this paragraph, however
       // much it looks like a heading on its own.
-      if (buf.length && !HARD_BREAK.test(buf[buf.length - 1]) && headingLike(l, lines[i + 1])) break;
+      if (buf.length && !afterBreak && headingLike(l, lines[i + 1])) break;
       buf.push(l.trim());
       i++;
     }
@@ -451,8 +462,12 @@ function listBlock(items, levels, markers) {
 
 const FULL_BOLD = /^\*\*([\s\S]+)\*\*$/;
 
-/** A cell holds more than a line of text when it has line breaks, or opens with a bullet. */
-const isRichCell = (text) => /<br\s*\/?>/i.test(text) || CELL_BULLET.test(text);
+/**
+ * A cell holds more than a line of text when it has line breaks. A one-item
+ * list in a cell is written with a trailing `<br>`, so a cell that merely
+ * starts with a dash — "- 5", "– n/a" — stays the text it is.
+ */
+const isRichCell = (text) => /<br\s*\/?>/i.test(text);
 
 /**
  * Remove emphasis that the surrounding element already provides.

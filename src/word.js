@@ -115,7 +115,8 @@ export function readWordStyles(doc) {
     }
     for (const sel of selectors.split(',')) {
       const s = sel.trim().toLowerCase();
-      if (/^[a-z0-9]*\.[a-z0-9_-]+$/.test(s)) classes.set(s, decls);
+      // Class rules, and bare tag rules: Word writes its heading styles as `h1 {...}`.
+      if (/^[a-z0-9]*(\.[a-z0-9_-]+)?$/.test(s)) classes.set(s, decls);
     }
   }
 
@@ -265,7 +266,7 @@ const overlaps = (a, b) => Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y) >
  * with. Items side by side are one row: a picture beside a box of text is a
  * picture the text wraps around.
  */
-function readingOrder(items, contentWidthPt) {
+function readingOrder(items, contentWidthPt, marginLeftPt) {
   const frameOf = (it) => (it.vRel === 'margin' || it.vRel === 'page' ? 'page' : 'text');
   const order = items.map((it, i) => ({ it, i }));
   for (const frame of ['text', 'page']) {
@@ -284,7 +285,7 @@ function readingOrder(items, contentWidthPt) {
   const out = [];
   for (const row of rows) {
     const side = (it) => {
-      const centre = (it.hRel === 'page' ? it.x - 0 : it.x) + it.w / 2;
+      const centre = (it.hRel === 'page' ? it.x - marginLeftPt : it.x) + it.w / 2;
       const r = centre / contentWidthPt;
       return r < 0.42 ? 'left' : r > 0.58 ? 'right' : 'center';
     };
@@ -353,7 +354,7 @@ export function expandVml(doc, styles) {
   }
 
   for (const [anchor, items] of anchors) {
-    const ordered = readingOrder(items, styles.contentWidthPt);
+    const ordered = readingOrder(items, styles.contentWidthPt, styles.marginLeftPt);
     // Above the paragraph's own line only what sits above it; the rest follows.
     const before = ordered.filter((it) => it.vRel !== 'margin' && it.vRel !== 'page' && it.y + it.h <= 0);
     const after = ordered.filter((it) => !before.includes(it));

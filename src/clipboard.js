@@ -77,6 +77,25 @@ function wrap(inner, marker) {
 
 const LINKABLE = /^(https?:|mailto:)/i;
 
+/** A list item's first line, as parse.js reads one. */
+const LIST_START = new RegExp(`^\\s*(?:[-*+\u2022\u00b7\u2013\u2014${LIST_GLYPHS}]|\\d{1,3}[.)]|[a-zA-Z][.)])\\s`);
+
+/**
+ * A link written as `[words](href)`. A scheme is lower-cased so the tokeniser
+ * reads it; emphasis inside the words goes outside the brackets, because a
+ * link's words are not tokenised again. Words the tokeniser would link by
+ * themselves — a bare address, an email — need no syntax at all.
+ */
+function linkMarkdown(words, href) {
+  const url = href.replace(/^[a-z]+:/i, (scheme) => scheme.toLowerCase()).replace(/[()\s]/g, encodeURIComponent);
+  const bare = words.replace(/\*+/g, '');
+  const own = tokenizeInline(bare);
+  if (own.length === 1 && own[0].href && own[0].text === bare) return bare;
+  const strong = /^\*\*[^*]+\*\*$/.test(words);
+  const link = `[${bare}](${url})`;
+  return strong ? `**${link}**` : link;
+}
+
 function inlineText(node, out) {
   for (const child of node.childNodes) {
     if (child.nodeType === 3) {
@@ -116,7 +135,7 @@ function inlineText(node, out) {
       const words = inner.trim();
       if (LINKABLE.test(href) && words && words !== href && !/[[\]\n]/.test(words)) {
         const m = inner.match(/^(\s*)[\s\S]*?(\s*)$/);
-        out.push(`${m[1]}[${words}](${href.replace(/[()\s]/g, encodeURIComponent)})${m[2]}`);
+        out.push(`${m[1]}${linkMarkdown(words, href)}${m[2]}`);
       } else out.push(inner);
       continue;
     }
@@ -197,9 +216,9 @@ function joinCell(lines) {
     out += text;
     gap = false;
   }
-  // A cell that is one numbered item still needs its `<br>`: without one,
-  // "1. Plan" in a cell is read as the words "1. Plan".
-  if (!out.includes('<br>') && /^(?:\d{1,3}|[a-zA-Z])[.)]\s/.test(out)) out += '<br>';
+  // A cell that is one list item still needs its `<br>`: without one,
+  // "- Plan" in a cell is read as the words "- Plan".
+  if (!out.includes('<br>') && LIST_START.test(out)) out += '<br>';
   return out.replace(/\|/g, '\\|');
 }
 
@@ -273,7 +292,10 @@ function walk(node, lines, depth, ctx) {
     if (/^H[1-6]$/.test(tag)) {
       if (ctx) {
         const p = ctx.paragraph(child);
-        if (p.plain) lines.push({ kind: 'block', text: `${'#'.repeat(Math.min(Number(tag[1]), 3))} ${p.md}`, record: p.record });
+        // A heading is one line: a line break inside it becomes a space.
+        const md = p.md.replace(/\\\n/g, ' ');
+        const record = { ...p.record, plain: p.record.plain.replace(/\n/g, ' ') };
+        if (p.plain) lines.push({ kind: 'block', text: `${'#'.repeat(Math.min(Number(tag[1]), 3))} ${md}`, record });
         continue;
       }
       const level = Math.min(Number(tag[1]), 3);
@@ -705,6 +727,12 @@ function listItem(para, run, styles, styleOf, classRule) {
 
   const number = text.match(/^\(?(\d{1,3})[.)]?$/);
   if (number) return { level, marker: `${number[1]}.` };
+  // Roman numerals, and legal numbering such as "1.2.", are written as plain
+  // numbers: the model has no roman lists, and "i." would read as the letter.
+  const roman = text.match(/^\(?([ivxlcdm]+)[.)]$/i);
+  if (roman && (/roman/.test(format) || roman[1].length > 1)) return { level, marker: `${romanValue(roman[1])}.` };
+  const legal = text.match(/^(\d{1,3}\.)+\d{1,3}\.?$/);
+  if (legal) return { level, marker: `${text.replace(/\.$/, '').split('.').pop()}.` };
   const letter = text.match(/^\(?([a-zA-Z])[.)]$/);
   if (letter && format !== 'bullet') return { level, marker: `${letter[1]}.` };
   if (format && format !== 'bullet' && !text) return { level, marker: '1.' };
@@ -712,6 +740,13 @@ function listItem(para, run, styles, styleOf, classRule) {
   const shown = symbolFont(font) ? mapSymbols(text, font) : WORD_BULLETS[text] || text;
   const glyph = shown.length === 1 && LIST_GLYPHS.includes(shown) ? shown : null;
   return { level, marker: glyph || '-' };
+}
+
+/** "iv" -> 4. */
+function romanValue(text) {
+  const values = { i: 1, v: 5, x: 10, l: 50, c: 100, d: 500, m: 1000 };
+  const digits = text.toLowerCase().split('').map((c) => values[c] || 0);
+  return Math.max(1, digits.reduce((sum, v, k) => sum + (v < (digits[k + 1] || 0) ? -v : v), 0));
 }
 
 /**
@@ -759,7 +794,7 @@ function toMarkdown(runs) {
     const words = whole.slice(lead).replace(/[\s[\]]+$/, '');
     if (!words || /[[\]\n]/.test(words)) continue;
     put(opens, spans[i].start + lead, '[');
-    put(closes, spans[i].start + lead + words.length, `](${href.replace(/[()\s]/g, encodeURIComponent)})`);
+    put(closes, spans[i].start + lead + words.length, `](${href.replace(/^[a-z]+:/i, (x) => x.toLowerCase()).replace(/[()\s]/g, encodeURIComponent)})`);
     for (let k = i; k <= j; k++) linked.add(k);
   }
 

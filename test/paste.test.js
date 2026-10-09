@@ -75,7 +75,7 @@ const TABLE = [
   '',
   '|  |  |',
   '| --- | --- |',
-  '| **Transmission** | - Bites of infected mosquitoes |',
+  '| **Transmission** | - Bites of infected mosquitoes<br> |',
   '| **Clinical** | **Incubation:** 4-10 days.<br>Three phases:<br><br>1. Febrile<br>2. Critical |',
   '{: widths="14 86" border="#000000"}',
 ].join('\n');
@@ -103,12 +103,25 @@ test('an attribute line that is not about a known key changes nothing', () => {
   assert.equal(t.widths, undefined);
 });
 
-test('a cell with line breaks or a bullet holds paragraphs and lists', () => {
+test('a cell with line breaks holds paragraphs and lists; a dash alone is just a dash', () => {
   const t = parse(TABLE).find((b) => b.type === 'table');
   assert.deepEqual(t.cells['rows.0.1'].map((b) => b.type), ['ul']);
   assert.deepEqual(t.cells['rows.1.1'].map((b) => b.type), ['p', 'ol']);
   assert.equal(t.cells['rows.1.1'][0].text, '**Incubation:** 4-10 days.\nThree phases:');
   assert.equal(t.cells['rows.0.0'], undefined, 'a one-line cell stays a plain cell');
+  const dash = parse('Doc\n\n| A | B |\n|---|---|\n| - 5 | x |').find((b) => b.type === 'table');
+  assert.equal(dash.cells, undefined, '"- 5" in a cell is a value, not a list');
+});
+
+test('initials at the start of a wrapped line do not start a list', () => {
+  const blocks = parse('Doc\n\nIt was written by\nJ. K. Rowling in 1997.');
+  assert.deepEqual(blocks.map((b) => b.type), ['h1', 'p']);
+});
+
+test('a hard break holds the next line in its paragraph, whatever it looks like', () => {
+  const [, p, list] = parse('Doc\n\nHead Office\\\n- Floor 2\n\n- a\\\n  b\\\n  c');
+  assert.equal(p.text, 'Head Office\n- Floor 2');
+  assert.deepEqual(list.items, ['a\nb\nc']);
 });
 
 test('the paragraphs inside a cell are units of their own, at the table size', () => {
