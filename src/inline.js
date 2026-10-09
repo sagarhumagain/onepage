@@ -7,9 +7,26 @@
  * span starts.
  */
 
-/** @typedef {{text:string, bold?:boolean, italic?:boolean, code?:boolean, href?:string}} Token */
+/**
+ * @typedef {{text:string, bold?:boolean, italic?:boolean, code?:boolean,
+ *   href?:string, bg?:string, pad?:number}} Token
+ */
+
+import { HIGHLIGHT } from './markup.js';
 
 const PATTERNS = [
+  /*
+   * A highlight wraps other formatting rather than competing with it, so it
+   * re-enters the tokeniser for its contents and stamps the colour onto every
+   * token that comes back. That is what keeps a bold word inside a highlight
+   * both bold and highlighted.
+   */
+  {
+    re: HIGHLIGHT,
+    make: (m) => ({
+      nested: tokenizeInline(m[3]).map((t) => ({ ...t, bg: m[1].toLowerCase(), pad: Number(m[2]) || 0 })),
+    }),
+  },
   { re: /`([^`\n]+)`/, make: (m) => ({ text: m[1], code: true }) },
   { re: /\*\*([^*\n]+)\*\*/, make: (m) => ({ text: m[1], bold: true }) },
   { re: /__([^_\n]+)__/, make: (m) => ({ text: m[1], bold: true }) },
@@ -58,7 +75,9 @@ export function tokenizeInline(text) {
     }
 
     if (best.m.index > 0) out.push({ text: rest.slice(0, best.m.index) });
-    out.push(best.pattern.make(best.m));
+    const made = best.pattern.make(best.m);
+    if (made.nested) out.push(...made.nested);
+    else out.push(made);
     rest = rest.slice(best.m.index + best.m[0].length);
   }
 

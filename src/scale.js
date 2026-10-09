@@ -19,6 +19,8 @@ export const SCALE = {
   quote: { size: 1, lineHeight: null, before: 0.7, after: 0.7, italic: true },
   code: { size: 0.9, lineHeight: 1.32, before: 0.7, after: 0.7, mono: true },
   table: { size: 0.95, lineHeight: null, before: 0.7, after: 0.7 },
+  image: { size: 1, lineHeight: null, before: 0.7, after: 0.7 },
+  caption: { size: 0.82, lineHeight: null, before: 0.3, after: 0 },
 };
 
 /** Gap between columns, mm. Mirrors `column-gap` in document.css. */
@@ -92,6 +94,12 @@ export function resolveTypeface(key, isAvailable) {
 
 /** 1pt = 20 twips. OOXML measures paragraph spacing and line height in twips. */
 export const ptToTwip = (pt) => Math.round(pt * 20);
+
+/**
+ * 1 CSS pixel = 1/96in = 15 twips. Only images need this: docx sizes a
+ * picture in pixels while every other measurement in the exporter is twips.
+ */
+export const TWIP_PER_PX = 15;
 
 /**
  * Font sizes in OOXML are half-points, and this rounds DOWN on purpose.

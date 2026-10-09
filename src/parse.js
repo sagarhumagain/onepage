@@ -11,8 +11,12 @@
 /** @typedef {{type:'ul'|'ol', items:string[], start?:number}} ListBlock */
 /** @typedef {{type:'hr'}} RuleBlock */
 /** @typedef {{type:'table', head:string[], rows:string[][]}} TableBlock */
-/** @typedef {{type:'image', src:string, alt?:string, align?:string}} ImageBlock */
+/** @typedef {{type:'image', ref:string, alt:string, widthPct:number, align:string}} ImageBlock */
 /** @typedef {TextBlock|ListBlock|RuleBlock|TableBlock|ImageBlock} Block */
+
+import { IMAGE_LINE, HIGHLIGHT, DEFAULT_ALIGN, DEFAULT_WIDTH_PCT } from './markup.js';
+
+const HIGHLIGHT_GLOBAL = new RegExp(HIGHLIGHT.source, 'g');
 
 /** Build a string from code points. Keeps this source file pure ASCII. */
 const ch = (...codes) => String.fromCharCode(...codes);
@@ -163,6 +167,22 @@ export function parse(raw) {
       continue;
     }
 
+    // An image reference on a line of its own. Checked first: the token
+    // contains punctuation that the heading and list heuristics below would
+    // otherwise try to interpret.
+    const image = line.trim().match(IMAGE_LINE);
+    if (image) {
+      blocks.push({
+        type: 'image',
+        ref: image[2],
+        alt: image[1] || '',
+        widthPct: Number(image[3]) || DEFAULT_WIDTH_PCT,
+        align: image[4] || DEFAULT_ALIGN,
+      });
+      i++;
+      continue;
+    }
+
     // ``` fenced code
     if (FENCE.test(line)) {
       const fence = line.trim().slice(0, 3);
@@ -277,7 +297,7 @@ export function parse(raw) {
         (BULLET_RE.test(l) || ORDERED.test(l) || ATX.test(l) || RULE.test(l) || QUOTE.test(l) || FENCE.test(l))
       )
         break;
-      if (buf.length && looksLikeHeading(l, lines[i + 1])) break;
+      if (buf.length && (looksLikeHeading(l, lines[i + 1]) || IMAGE_LINE.test(l.trim()))) break;
       buf.push(l.trim());
       i++;
     }
@@ -309,9 +329,18 @@ function tidy(blocks) {
   return blocks;
 }
 
-/** Rough word count, used for the overflow ladder and the UI readout. */
+/**
+ * Rough word count, used for the overflow ladder and the UI readout.
+ *
+ * Markup the user did not type is not content: an image reference is one
+ * block, not four words, and a highlight marker is punctuation.
+ */
 export function wordCount(raw) {
-  const t = normalize(raw);
+  const t = normalize(raw)
+    .split('\n')
+    .filter((l) => !IMAGE_LINE.test(l.trim()))
+    .join('\n')
+    .replace(HIGHLIGHT_GLOBAL, (_m, _c, _p, inner) => inner);
   if (!t) return 0;
   return (t.match(/\S+/g) || []).length;
 }

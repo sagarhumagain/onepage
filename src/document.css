@@ -187,53 +187,99 @@
 
 /* --- Images ----------------------------------------------------------- */
 
+/*
+ * The width is a percentage of the column, written by the resize handle. A
+ * percentage rather than a pixel size is what makes an image keep its
+ * proportions when the fitter changes the column count or the margins.
+ */
 .page-body .doc-image {
+  --img-width: 62%;
   margin: 0.7em 0;
+  padding: 0;
   break-inside: avoid;
+  display: flex;
+  flex-direction: column;
 }
 
 .page-body .doc-image img {
   display: block;
-  max-width: 100%;
+  width: var(--img-width);
   height: auto;
   border-radius: 0.15em;
 }
 
-.page-body .doc-image[data-align="left"] {
-  text-align: left;
+.page-body .doc-image figcaption {
+  font-size: 0.82em;
+  color: var(--doc-muted);
+  margin-top: 0.3em;
+  width: var(--img-width);
 }
 
-.page-body .doc-image[data-align="center"] {
+.page-body .doc-image[data-align='left'] {
+  align-items: flex-start;
+}
+
+.page-body .doc-image[data-align='center'] {
+  align-items: center;
+}
+
+.page-body .doc-image[data-align='center'] figcaption {
   text-align: center;
 }
 
-.page-body .doc-image[data-align="right"] {
+.page-body .doc-image[data-align='right'] {
+  align-items: flex-end;
+}
+
+.page-body .doc-image[data-align='right'] figcaption {
   text-align: right;
 }
 
-.page-body .doc-image[data-align="left"] img,
-.page-body .doc-image[data-align="right"] img {
-  max-width: 65%;
+/*
+ * Selection chrome for the editor only. It is drawn with outline rather than
+ * border so it takes no space and cannot change the fitted layout, and the
+ * print block below removes it so a selected image never prints with a ring
+ * around it.
+ */
+.page-body .doc-image.is-selected img {
+  outline: 2px solid #2f6df6;
+  outline-offset: 2px;
 }
 
-.page-body .doc-image[data-align="center"] img {
-  max-width: 90%;
+/* --- Highlighted runs --------------------------------------------------- */
+
+/*
+ * A highlight is padded on the inline axis only in effect: vertical padding
+ * on an inline box overlaps neighbouring lines rather than pushing them
+ * apart, so box-decoration-break keeps a highlight that wraps across a line
+ * break looking like one continuous band rather than two truncated ones.
+ */
+.page-body .doc-hl {
+  background: transparent;
+  color: inherit;
+  border-radius: 0.2em;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
 }
 
-.page-body .doc-image-caption {
-  font-size: 0.82em;
-  color: var(--doc-muted);
-  margin-top: 0.25em;
-  text-align: center;
-}
-
-/* --- Background with padding ------------------------------------------ */
-
-.page-body .bg-padded {
-  padding: 0.65em 0.85em;
-  margin: 0.7em 0;
+/*
+ * A whole block that is highlighted becomes a real padded box. Its padding is
+ * written inline by the renderer, so only the things the renderer does not
+ * decide belong here.
+ */
+.page-body .doc-hl-block {
   border-radius: 0.25em;
   break-inside: avoid;
+  print-color-adjust: exact;
+  -webkit-print-color-adjust: exact;
+}
+
+/*
+ * A highlighted blockquote keeps its rule, but the rule must sit inside the
+ * coloured box rather than floating to the left of it.
+ */
+blockquote.doc-hl-block {
+  border-left-color: rgb(0 0 0 / 0.22);
 }
 
 /* --- Print ------------------------------------------------------------ */
@@ -276,8 +322,12 @@
   }
 
   .page-body {
-    /* Backgrounds on table headers and code blocks must survive. */
+    /* Backgrounds on table headers, code blocks and highlights must survive. */
     print-color-adjust: exact;
     -webkit-print-color-adjust: exact;
+  }
+
+  .page-body .doc-image.is-selected img {
+    outline: 0 !important;
   }
 }

@@ -36,7 +36,7 @@ import {
 } from 'docx';
 
 import { tokenizeInline } from './inline.js';
-import { A4_TWIP, COLUMN_GAP_MM, SCALE, mmToTwip, ptToHalfPoint, ptToTwip } from './scale.js';
+import { A4_TWIP, COLUMN_GAP_MM, SCALE, TWIP_PER_PX, mmToTwip, ptToHalfPoint, ptToTwip } from './scale.js';
 
 /**
  * Word's line breaking never matches Chromium's exactly — kerning,
@@ -49,8 +49,19 @@ const WORD_REFLOW_SLACK = 0.97;
 const RULE_COLOR = 'C8CCD4';
 const MUTED = '565C66';
 
+/**
+ * Word expresses a run's background as a shading fill: six hex digits, no
+ * leading hash. A highlight's padding has no OOXML equivalent at all, so the
+ * colour carries over and the padding does not.
+ */
+const shadingFor = (t) => {
+  if (!t.bg || !/^#[0-9a-fA-F]{6}$/.test(t.bg)) return undefined;
+  return { fill: t.bg.slice(1).toUpperCase() };
+};
+
 const runsFor = (text, base) =>
   tokenizeInline(text).flatMap((t) => {
+    const shading = shadingFor(t);
     const run = new TextRun({
       text: t.text,
       bold: Boolean(t.bold) || base.bold,
@@ -58,6 +69,7 @@ const runsFor = (text, base) =>
       font: t.code ? 'Courier New' : base.font,
       size: base.size,
       color: base.color,
+      shading,
     });
     if (!t.href) return [run];
     return [
@@ -71,6 +83,7 @@ const runsFor = (text, base) =>
             font: base.font,
             size: base.size,
             color: base.color,
+            shading,
             underline: {},
           }),
         ],
@@ -286,28 +299,63 @@ export async function buildDocx({ blocks, layout, face, title }) {
         break;
       }
       case 'image': {
-        if (b.src && b.src.startsWith('data:')) {
-          try {
-            const base64 = b.src.split(',')[1];
-            const imgBuffer = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
-            const maxWidth = Math.floor(columnWidth * 0.85);
+        /*
+         * docx sizes an image in pixels, but every other measurement in this
+         * file is in twips. At 96dpi one CSS pixel is 15 twips, and the image
+         * keeps its own aspect ratio rather than an assumed one — a portrait
+         * photo squashed to 3:5 was the most visible way this export used to
+         * disagree with the preview.
+         */
+        if (!b.src || !b.src.startsWith('data:')) break;
+        try {
+          const image = m('image');
+          const base64 = b.src.split(',')[1];
+          const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
+
+          const columnPx = columnWidth / TWIP_PER_PX;
+          const pct = Math.max(5, Math.min(100, Number(b.widthPct) || 62)) / 100;
+          const width = Math.max(1, Math.round(columnPx * pct));
+          const ratio = b.naturalWidth && b.naturalHeight ? b.naturalHeight / b.naturalWidth : 0.62;
+          const height = Math.max(1, Math.round(width * ratio));
+
+          children.push(
+            new Paragraph({
+              children: [
+                new ImageRun({
+                  data: bytes,
+                  transformation: { width, height },
+                  altText: { title: b.alt || 'Image', description: b.alt || 'Image', name: b.alt || 'image' },
+                }),
+              ],
+              alignment:
+                b.align === 'left'
+                  ? AlignmentType.LEFT
+                  : b.align === 'right'
+                    ? AlignmentType.RIGHT
+                    : AlignmentType.CENTER,
+              spacing: { before: image.before, after: b.alt ? 0 : image.after },
+              widowControl: false,
+            })
+          );
+
+          if (b.alt) {
+            const cap = m('caption');
             children.push(
               new Paragraph({
-                children: [
-                  new ImageRun({
-                    data: imgBuffer,
-                    transformation: { width: maxWidth, height: Math.round(maxWidth * 0.6) },
-                    altText: { title: b.alt || 'Image', description: b.alt || 'Image', name: b.alt || 'image' },
-                  }),
-                ],
-                alignment: b.align === 'left' ? AlignmentType.LEFT : b.align === 'right' ? AlignmentType.RIGHT : AlignmentType.CENTER,
-                spacing: { before: ptToTwip(basePt * 0.5), after: ptToTwip(basePt * 0.5), line: 1, lineRule: LineRuleType.EXACTLY },
-                widowControl: false,
+                children: runsFor(b.alt, { font: face.docx, size: cap.halfPoints, color: MUTED }),
+                alignment:
+                  b.align === 'left'
+                    ? AlignmentType.LEFT
+                    : b.align === 'right'
+                      ? AlignmentType.RIGHT
+                      : AlignmentType.CENTER,
+                spacing: { before: cap.before, after: image.after },
               })
             );
-          } catch {
-            // Skip images that can't be decoded
           }
+        } catch {
+          // An image that cannot be decoded is left out rather than failing
+          // the whole export.
         }
         break;
       }

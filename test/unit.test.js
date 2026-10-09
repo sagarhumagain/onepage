@@ -15,6 +15,15 @@ import { parse, normalize, wordCount } from '../src/parse.js';
 import { render, escapeHtml } from '../src/render.js';
 import { tokenizeInline, plainText } from '../src/inline.js';
 import { SCALE, COLUMN_GAP_MM, TYPEFACES, resolveTypeface, mmToTwip, ptToHalfPoint, ptToTwip, A4_TWIP } from '../src/scale.js';
+import {
+  highlight,
+  imageToken,
+  insertImageAt,
+  referencedIds,
+  removeImage,
+  stripHighlights,
+  updateImage,
+} from '../src/markup.js';
 
 const SRC = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'src');
 const types = (blocks) => blocks.map((b) => b.type);
@@ -220,4 +229,131 @@ test('every typeface names a family the DOCX exporter can use', () => {
     assert.ok(face.css.includes(face.docx), `${key}: preview stack must lead with ${face.docx}`);
     if (face.fallback) assert.ok(TYPEFACES[face.fallback], `${key}: unknown fallback ${face.fallback}`);
   }
+});
+
+
+/* --- images in the source text ------------------------------------------ */
+
+const IMG = imageToken({ id: 'abc123', widthPct: 62, align: 'center' });
+
+test('an image reference parses as its own block', () => {
+  const b = parse(`Report\n\n${IMG}\n\nBody text after the picture.`);
+  assert.deepEqual(types(b), ['h1', 'image', 'p']);
+  assert.equal(b[1].ref, 'abc123');
+  assert.equal(b[1].widthPct, 62);
+  assert.equal(b[1].align, 'center');
+});
+
+test('an image does not get swallowed into a surrounding paragraph', () => {
+  const b = parse(`Some prose that runs on.\n${IMG}\nMore prose after it.`);
+  assert.deepEqual(types(b), ['p', 'image', 'p']);
+});
+
+test('an image block moves when text is inserted above it', () => {
+  const before = parse(`Intro line here.\n\n${IMG}`);
+  const after = parse(`Intro line here.\n\nA new paragraph.\n\n${IMG}`);
+  assert.equal(types(before).indexOf('image'), 1);
+  assert.equal(types(after).indexOf('image'), 2);
+});
+
+test('image tokens can be found, resized, realigned and removed', () => {
+  const text = `Title\n\n${IMG}\n\nBody.`;
+  assert.deepEqual(referencedIds(text), ['abc123']);
+
+  const wider = updateImage(text, 'abc123', { widthPct: 90, align: 'left' });
+  const block = parse(wider).find((b) => b.type === 'image');
+  assert.equal(block.widthPct, 90);
+  assert.equal(block.align, 'left');
+
+  const gone = removeImage(wider, 'abc123');
+  assert.equal(referencedIds(gone).length, 0);
+  assert.equal(parse(gone).find((b) => b.type === 'image'), undefined);
+});
+
+test('an inserted image always lands on a line of its own', () => {
+  const { text } = insertImageAt('One two three', 7, 7, IMG);
+  const lines = text.split('\n').filter((l) => l.trim());
+  assert.ok(lines.includes(IMG), 'the token is alone on its line');
+  assert.deepEqual(types(parse(text)), ['h1', 'image', 'p']);
+});
+
+test('an image renders only once its bytes are resolved', () => {
+  const blocks = parse(IMG);
+  assert.equal(render(blocks), '', 'an unresolved reference renders nothing');
+
+  const resolved = blocks.map((b) => ({ ...b, src: 'data:image/png;base64,AAAA' }));
+  const html = render(resolved);
+  assert.match(html, /<figure class="doc-image"/);
+  assert.match(html, /--img-width:62%/);
+  assert.match(html, /data-align="center"/);
+  assert.match(html, /data-ref="abc123"/);
+});
+
+test('an image reference is not counted as words', () => {
+  assert.equal(wordCount(`Two words\n\n${IMG}`), 2);
+});
+
+/* --- highlighting -------------------------------------------------------- */
+
+test('highlighting part of a line renders as an inline mark', () => {
+  const marked = highlight('important words', '#ffe066', 4);
+  const html = render(parse(`Heading\n\nSome ${marked} in a line of prose.`));
+  assert.match(html, /<mark class="doc-hl" style="background:#ffe066;padding:/);
+  assert.match(html, />important words</);
+  assert.doesNotMatch(html, /doc-hl-block/, 'a partial highlight is not a block');
+});
+
+test('an inline highlight is padded far less vertically than horizontally', () => {
+  const html = render(parse(`Heading\n\nx ${highlight('word', '#ffe066', 10)} y`));
+  const [, vertical, horizontal] = html.match(/padding:([\d.]+)em ([\d.]+)em/).map(Number);
+  assert.ok(vertical < horizontal / 2, `${vertical}em vertical vs ${horizontal}em horizontal`);
+});
+
+test('highlighting a whole paragraph makes it a padded block', () => {
+  const html = render(parse(`Heading\n\n${highlight('The whole of this paragraph is highlighted.', '#ffe066', 6)}`));
+  assert.match(html, /<p class="doc-hl-block" style="background:#ffe066;padding:0.6em 0.78em">/);
+  assert.doesNotMatch(html, /<mark/, 'a whole-block highlight needs no inline mark');
+});
+
+test('highlighting whole list items makes each one a padded block', () => {
+  const marked = highlight('- first item\n- second item', '#ffe066', 4);
+  const html = render(parse(`Heading\n\n${marked}`));
+  assert.equal(html.match(/<li class="doc-hl-block"/g).length, 2);
+});
+
+test('a highlight keeps the formatting inside it', () => {
+  const marked = highlight('a **bold** word', '#ffe066', 0);
+  const html = render(parse(`Heading\n\nLine with ${marked} inside.`));
+  assert.match(html, /<mark class="doc-hl"[^>]*>a <strong>bold<\/strong> word<\/mark>/);
+});
+
+test('a multi-line selection is highlighted line by line', () => {
+  const marked = highlight('- first item\n- second item', '#ffe066', 2);
+  assert.equal(marked.split('{=}').length - 1, 2);
+  const blocks = parse(`Heading\n\n${marked}`);
+  assert.deepEqual(types(blocks), ['h1', 'ul']);
+  assert.equal(blocks[1].items.length, 2);
+});
+
+test('highlighting is idempotent and reversible', () => {
+  const once = highlight('some text', '#ff0000', 3);
+  assert.equal(highlight(once, '#00ff00', 3), highlight('some text', '#00ff00', 3));
+  assert.equal(stripHighlights(once), 'some text');
+});
+
+test('a highlight marker is not counted as words', () => {
+  assert.equal(wordCount(highlight('two words', '#ffe066', 4)), 2);
+});
+
+test('only a real colour opens a highlight', () => {
+  const html = render([{ type: 'p', text: '{=javascript:alert(1)}x{=}' }]);
+  assert.doesNotMatch(html, /<mark/, 'a non-colour is not a highlight');
+  assert.doesNotMatch(html, /style=/, 'and never reaches a style attribute');
+});
+
+test('highlighting a list item leaves its marker alone', () => {
+  const marked = highlight('- first item', '#ffe066', 4);
+  assert.ok(marked.startsWith('- {='), marked);
+  const blocks = parse(`Heading\n\n${marked}`);
+  assert.deepEqual(types(blocks), ['h1', 'ul']);
 });

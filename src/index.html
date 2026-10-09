@@ -63,18 +63,38 @@
         </label>
 
         <label class="field">
-          <span>Background</span>
-          <input type="color" id="bg-color" value="#ffffff" class="color-pick" title="Page background color" />
+          <span>Highlight</span>
+          <div class="highlight-controls">
+            <input
+              type="color"
+              id="hl-color"
+              value="#ffe066"
+              class="color-pick"
+              title="Background colour for the selected text"
+            />
+            <input
+              type="number"
+              id="hl-pad"
+              class="pad-input"
+              min="0"
+              max="20"
+              step="1"
+              value="4"
+              title="Padding around the highlighted text"
+            />
+            <button type="button" id="hl-apply" class="btn-icon" title="Highlight the selected text">Apply</button>
+            <button type="button" id="hl-clear" class="btn-icon" title="Remove highlighting from the selection">Clear</button>
+          </div>
         </label>
 
-        <label class="field field-check">
-          <input type="checkbox" id="padding-toggle" />
-          <span>Padding</span>
+        <label class="field">
+          <span>Page</span>
+          <input type="color" id="bg-color" value="#ffffff" class="color-pick" title="Page background colour" />
         </label>
 
         <span class="field-sep" aria-hidden="true"></span>
 
-        <button type="button" id="btn-image" class="btn" title="Add image (or paste one)">Image</button>
+        <button type="button" id="btn-image" class="btn" title="Add an image (or paste or drop one)">Image</button>
         <input type="file" id="image-file" accept="image/*" multiple hidden />
       </div>
 
@@ -94,13 +114,35 @@
         <textarea
           id="source"
           spellcheck="false"
-          placeholder="Paste anything here — a Word document, an email, notes, a report.&#10;&#10;It will be rebuilt as a clean document and scaled to fit exactly one A4 page.&#10;&#10;Tip: paste images directly or click the Image button."
+          placeholder="Paste anything here — a Word document, an email, notes, a report.&#10;&#10;It will be rebuilt as a clean document and scaled to fit exactly one A4 page.&#10;&#10;Images: paste one, drop one anywhere, or click Image. It lands where the caret is, and the text flows around it.&#10;&#10;Highlight: select some text, pick a colour, press Apply."
         ></textarea>
       </section>
 
       <section class="pane pane-preview" id="preview">
         <div class="sheet-scaler" id="scaler">
           <iframe id="sheet" title="A4 preview" scrolling="no"></iframe>
+
+          <!--
+            Image chrome. It lives beside the sheet rather than inside it, so
+            nothing the user grabs can end up in the printed page, but inside
+            the scaler, so it can be positioned in the sheet's own coordinates.
+            The controls undo the scaler's zoom with --inv-scale.
+          -->
+          <div class="img-overlay" id="img-overlay" hidden>
+          <div class="img-overlay-frame" id="img-frame">
+            <button type="button" class="img-handle" id="img-handle" title="Drag to resize" aria-label="Resize image"></button>
+          </div>
+          <div class="img-tools" id="img-tools" role="toolbar" aria-label="Image">
+            <button type="button" class="img-tool" data-align="left" title="Align left">&#9612;</button>
+            <button type="button" class="img-tool" data-align="center" title="Align centre">&#9608;</button>
+            <button type="button" class="img-tool" data-align="right" title="Align right">&#9616;</button>
+            <span class="img-tool-sep"></span>
+            <input type="range" class="img-width" id="img-width" min="10" max="100" step="1" title="Width" />
+            <span class="img-width-val" id="img-width-val">62%</span>
+            <span class="img-tool-sep"></span>
+            <button type="button" class="img-tool img-tool-danger" id="img-remove" title="Remove image">&#10005;</button>
+            </div>
+          </div>
         </div>
       </section>
     </main>

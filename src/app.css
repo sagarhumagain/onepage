@@ -294,6 +294,7 @@ textarea:focus-visible,
 
 .sheet-scaler {
   /* Height is set in JS to the scaled sheet height so the scroll area is right. */
+  position: relative;
   margin: 0 auto;
   width: 210mm;
   transform-origin: top center;
@@ -426,12 +427,163 @@ textarea:focus-visible,
   border-radius: 2px;
 }
 
+/* --- Drop target --------------------------------------------------------- */
+
+.is-drop-target {
+  outline: 2px dashed var(--accent);
+  outline-offset: -4px;
+}
+
+/* --- Highlight controls -------------------------------------------------- */
+
+.highlight-controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.highlight-controls .btn-icon {
+  width: auto;
+  padding: 0 7px;
+}
+
+.pad-input {
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  width: 38px;
+  height: 26px;
+  padding: 0 4px;
+  color: var(--ink);
+  background: var(--panel-sunken);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
 /* --- Image upload button highlight -------------------------------------- */
 
 .btn-image-active {
   background: var(--accent) !important;
   border-color: var(--accent) !important;
   color: var(--accent-ink) !important;
+}
+
+/* --- Selected-image chrome ----------------------------------------------- */
+
+/*
+ * The overlay is positioned in the preview pane's own coordinates, over an
+ * iframe that is scaled by a CSS transform. Everything here is therefore
+ * written in already-scaled pixels by the code that measures the image, and
+ * nothing in this block may set its own transform.
+ */
+.img-overlay {
+  --inv-scale: 1;
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 5;
+}
+
+.img-overlay[hidden] {
+  display: none;
+}
+
+.img-overlay-frame {
+  position: absolute;
+  border: 1.5px solid var(--accent);
+  border-radius: 2px;
+  box-shadow: 0 0 0 9999px rgb(0 0 0 / 0);
+  pointer-events: none;
+}
+
+.img-handle {
+  position: absolute;
+  right: -7px;
+  bottom: -7px;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  border: 1.5px solid var(--accent);
+  border-radius: 3px;
+  background: var(--panel);
+  cursor: nwse-resize;
+  pointer-events: auto;
+  touch-action: none;
+  transform: scale(var(--inv-scale));
+  transform-origin: center;
+}
+
+.img-tools {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px;
+  background: var(--panel);
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  box-shadow: 0 2px 10px -2px rgb(0 0 0 / 0.28);
+  pointer-events: auto;
+  white-space: nowrap;
+  transform: translate(-50%, 0) scale(var(--inv-scale));
+  transform-origin: top center;
+}
+
+.img-tool {
+  font: inherit;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--ink);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  width: 24px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+}
+
+.img-tool:hover {
+  background: var(--panel-sunken);
+  border-color: var(--line);
+}
+
+.img-tool[aria-pressed='true'] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
+
+.img-tool-danger:hover {
+  background: #fdecec;
+  border-color: #e9b4b4;
+  color: #b42318;
+}
+
+.img-tool-sep {
+  width: 1px;
+  height: 16px;
+  background: var(--line);
+}
+
+.img-width {
+  width: 92px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.img-width-val {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ink-muted, var(--ink));
+  min-width: 30px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
 }
 
 /* --- Narrow windows --------------------------------------------------- */
