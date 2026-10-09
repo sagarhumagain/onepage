@@ -30,6 +30,13 @@ const EDITOR_CHROME = `
 .doc-image[data-selected='1'] { outline: 2px solid #0f766e; outline-offset: 2px; }
 .doc-image[data-selected='1'] img { pointer-events: none; }
 ::selection { background: rgba(15,118,110,0.22); }
+.footer-slot { cursor: pointer; }
+.footer-slot:hover { outline: 1.5px dashed rgba(15,118,110,0.7); outline-offset: 2px; }
+.footer-slot[data-selected='1'] { outline: 2px solid #0f766e; outline-offset: 2px; }
+.footer-slot[data-empty='1'] { min-width: 24mm; justify-content: center; border: 1.2px dashed rgba(15,118,110,0.55); border-radius: 1.5mm; box-sizing: border-box; }
+.footer-slot[data-empty='1']::after { content: '+ Image'; font: 600 8pt system-ui, sans-serif; color: #0f766e; }
+/* With no picture at all the footer takes no room; its empty slots wait in the bottom margin. */
+.page:not([data-footer='1']) .page-footer { display: flex; bottom: max(0.5mm, calc(var(--doc-margin-mm) * 0.5mm - 3mm)); height: 6mm; }
 `;
 
 const SHELL = `<!doctype html>
@@ -37,12 +44,12 @@ const SHELL = `<!doctype html>
 <style>${documentCssText}</style>
 <style>${EDITOR_CHROME}</style>
 </head><body class="print-root">
-<div class="page" id="page"><div class="page-body" id="page-body"></div></div>
+<div class="page" id="page"><div class="page-body" id="page-body"></div><div class="page-footer" id="page-footer" contenteditable="false"></div></div>
 </body></html>`;
 
 /**
  * @param {HTMLIFrameElement} iframe
- * @returns {Promise<{doc:Document, win:Window, page:HTMLElement, body:HTMLElement}>}
+ * @returns {Promise<{doc:Document, win:Window, page:HTMLElement, body:HTMLElement, footer:HTMLElement}>}
  */
 export function mountSheet(iframe) {
   return new Promise((resolve) => {
@@ -55,6 +62,7 @@ export function mountSheet(iframe) {
           win: iframe.contentWindow,
           page: doc.getElementById('page'),
           body: doc.getElementById('page-body'),
+          footer: doc.getElementById('page-footer'),
         });
       },
       { once: true }
@@ -70,7 +78,8 @@ export function mountSheet(iframe) {
  * @param {string} bodyHtml
  * @param {{fontPt:number, columns:number, lineHeight:number, marginMm:number,
  *   fontFamily:string, title?:string, bgColor?:string, imageScale?:number,
- *   inset?:boolean}} layout
+ *   inset?:boolean, footerHtml?:string}} layout — `footerHtml` is the
+ *   footer's content, given only when it has a picture in it
  */
 export function standaloneHtml(bodyHtml, layout) {
   const title = String(layout.title || 'Document').replace(/[<&]/g, ' ');
@@ -88,8 +97,8 @@ export function standaloneHtml(bodyHtml, layout) {
 <html lang="en"><head><meta charset="utf-8"><title>${title}</title>
 <style>${documentCssText}</style>
 </head><body class="print-root">
-<div class="page${layout.inset ? ' inset' : ''}" style="${vars}">
+<div class="page${layout.inset ? ' inset' : ''}"${layout.footerHtml ? ' data-footer="1"' : ''} style="${vars}">
 <div class="page-body">
 ${bodyHtml}
-</div></div></body></html>`;
+</div>${layout.footerHtml ? `<div class="page-footer">${layout.footerHtml}</div>` : ''}</div></body></html>`;
 }

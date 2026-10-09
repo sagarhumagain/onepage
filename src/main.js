@@ -20,6 +20,9 @@ import { textFromPaste, htmlToText, richFromPaste, marksFromRecords } from './cl
 import { TYPEFACES, resolveTypeface } from './scale.js';
 import { exportDocx, exportPdf, printSheet } from './exporters.js';
 import { applyMarks, collectUnits, storedMark, formatRange, clearRange, allHave, fmtAt, stepSize } from './marks.js';
+import { footerHtml, hasFooter, restoreFooter, serializeFooter } from './footer.js';
+import defaultLeft from './assets/footer-left.png?inline';
+import defaultRight from './assets/footer-right.png?inline';
 
 const $ = (id) => document.getElementById(id);
 
@@ -60,6 +63,10 @@ const els = {
   fmtFg: $('fmt-fg'),
   fmtBg: $('fmt-bg'),
   fmtPad: $('fmt-pad'),
+  footTools: $('foot-tools'),
+  footFrame: $('foot-frame'),
+  footBar: $('foot-bar'),
+  footerFile: $('footer-file'),
 };
 
 const STORE_KEY = 'onepage.state.v3';
@@ -89,6 +96,20 @@ let fgColor = '#b42318';
 
 /** id -> {src, alt, w, h, width, align, wrap}. Positions live in the text. */
 let images = {};
+/**
+ * The two logos at the foot of every page; see footer.js. Until something
+ * else is chosen they are the bundled defaults, which are saved as the word
+ * "default" rather than as their bytes.
+ */
+const DEFAULT_FOOTER = {
+  left: { src: defaultLeft, alt: 'Government of Nepal', w: 210, h: 212, preset: true },
+  right: { src: defaultRight, alt: 'World Health Organization Nepal', w: 417, h: 214, preset: true },
+};
+let footer = { ...DEFAULT_FOOTER };
+/** The footer slot being edited, 'left' or 'right', or null. */
+let selectedSlot = null;
+/** The slot a picked file goes into. */
+let footerTarget = null;
 /** Content-anchored run formatting; see marks.js. */
 let marks = [];
 
@@ -165,6 +186,7 @@ function saveState() {
         fgColor,
         images: kept,
         marks,
+        footer: serializeFooter(footer),
       })
     );
   } catch {
@@ -201,6 +223,7 @@ function restoreState() {
   if (typeof s.fgColor === 'string') fgColor = s.fgColor;
   if (s.images && typeof s.images === 'object') images = s.images;
   if (Array.isArray(s.marks)) marks = s.marks;
+  footer = restoreFooter(s.footer, DEFAULT_FOOTER);
 
   els.bgColor.value = bgColor;
   els.fmtBg.value = hlColor;
@@ -338,6 +361,7 @@ async function update(opts = {}) {
     sheetRefs.page.style.setProperty('--doc-font-family', face.css);
     sheetRefs.page.style.setProperty('--doc-bg', bgColor);
     sheetRefs.page.classList.toggle('inset', inset);
+    renderFooter();
 
     const words = wordCount(els.source.value);
     const hasImages = Boolean(sheetRefs.body.querySelector('.doc-image'));
@@ -365,6 +389,7 @@ async function update(opts = {}) {
     running = false;
     restoreOffsets();
     restoreImageSelection();
+    syncFooterTools();
     const next = queued;
     queued = null;
     if (next) update(next);
@@ -517,6 +542,84 @@ function removeImage(id) {
   saveState();
 }
 
+/* --- The footer ---------------------------------------------------------- */
+
+let footerShown = null;
+
+/**
+ * Draw the footer into the page. Its pictures are only replaced when they
+ * change: a re-fit on every keystroke must not make the logos flash.
+ */
+function renderFooter() {
+  const html = footerHtml(footer);
+  if (html !== footerShown) {
+    sheetRefs.footer.innerHTML = html;
+    footerShown = html;
+  }
+  if (hasFooter(footer)) sheetRefs.page.setAttribute('data-footer', '1');
+  else sheetRefs.page.removeAttribute('data-footer');
+  const slot = selectedSlot && sheetRefs.footer.querySelector(`[data-slot="${selectedSlot}"]`);
+  for (const el of sheetRefs.footer.querySelectorAll('.footer-slot')) el.toggleAttribute('data-selected', el === slot);
+  if (slot) slot.setAttribute('data-selected', '1');
+}
+
+function selectFooterSlot(slot) {
+  selectedSlot = slot && footer[slot] ? slot : null;
+  if (selectedSlot) {
+    selectImage(null);
+    const sel = sheetRefs.win.getSelection();
+    if (sel) sel.removeAllRanges();
+    pendingSelection = null;
+  }
+  renderFooter();
+  syncTools();
+}
+
+function syncFooterTools() {
+  const el = selectedSlot && sheetRefs ? sheetRefs.footer.querySelector(`[data-slot="${selectedSlot}"] img`) : null;
+  if (!el) {
+    els.footTools.hidden = true;
+    return;
+  }
+  els.footTools.hidden = false;
+  const box = paneBox(el.getBoundingClientRect());
+  els.footFrame.style.left = `${box.left}px`;
+  els.footFrame.style.top = `${box.top}px`;
+  els.footFrame.style.width = `${box.width}px`;
+  els.footFrame.style.height = `${box.height}px`;
+  placeBar(els.footBar, box);
+}
+
+/** One change to the footer: one undo step, and a re-fit, since it moves the text's foot. */
+function setFooterSlot(slot, image) {
+  footer = { ...footer, [slot]: image };
+  if (!image && selectedSlot === slot) selectedSlot = null;
+  commit('footer');
+  update();
+  saveState();
+}
+
+function pickFooterImage(slot) {
+  footerTarget = slot;
+  els.footerFile.click();
+}
+
+async function footerImageFromFile(file) {
+  const slot = footerTarget;
+  footerTarget = null;
+  if (!slot || !file || !file.type.startsWith('image/')) return;
+  const src = await readFileAsDataURL(file);
+  const { width, height } = await getImageDimensions(src);
+  setFooterSlot(slot, { src, alt: String(file.name || '').replace(/\.[a-z0-9]+$/i, ''), w: width, h: height });
+}
+
+function onFooterAction(event) {
+  const act = event.target && event.target.dataset ? event.target.dataset.act : null;
+  if (!act || !selectedSlot) return;
+  if (act === 'replace') pickFooterImage(selectedSlot);
+  else if (act === 'remove') setFooterSlot(selectedSlot, null);
+}
+
 /* --- Image selection and resizing --------------------------------------- */
 
 const figureFor = (id) => (id ? sheetRefs.body.querySelector(`.doc-image[data-img="${id}"]`) : null);
@@ -526,6 +629,10 @@ function selectImage(id) {
   if (previous) previous.removeAttribute('data-selected');
   selectedImage = id && images[id] ? id : null;
   const next = figureFor(selectedImage);
+  if (next && selectedSlot) {
+    selectedSlot = null;
+    renderFooter();
+  }
   if (next) {
     next.setAttribute('data-selected', '1');
     // A picture and a run of words are never both "the thing being edited".
@@ -574,6 +681,7 @@ function placeBar(bar, box) {
 function syncTools() {
   syncImageTools();
   syncTextTools();
+  syncFooterTools();
 }
 
 function setFrame(box) {
@@ -994,6 +1102,7 @@ const snapshot = () => ({
   typeface: els.typeface.value,
   columns: els.columns.value,
   fill: els.fill.checked,
+  footer: { ...footer },
 });
 
 function commit(kind) {
@@ -1025,6 +1134,8 @@ function applySnapshot(state) {
   els.typeface.value = state.typeface;
   els.columns.value = state.columns;
   els.fill.checked = state.fill;
+  footer = { ...state.footer };
+  selectedSlot = null;
   els.bgColor.value = bgColor;
   els.fmtBg.value = hlColor;
   els.fmtPad.value = String(hlPad);
@@ -1258,6 +1369,7 @@ async function sheetHtml() {
     title: docTitle,
     bgColor,
     inset,
+    footerHtml: hasFooter(footer) ? footerHtml(footer) : '',
   });
 }
 
@@ -1314,6 +1426,10 @@ function adoptPastedSettings(rich) {
   const face = rich.typeface && TYPEFACES[rich.typeface] ? rich.typeface : null;
   if (face) els.typeface.value = face;
   els.columns.value = '1';
+  // A document that brings its own floating logos has its own letterhead:
+  // the default footer steps aside rather than draw them twice. The empty
+  // slots stay there to be filled again.
+  if (Object.values(rich.images).some((img) => img.wrap)) footer = { left: null, right: null };
 }
 
 /** A Word paste's pictures and formatting, once its text is in the source. */
@@ -1406,6 +1522,10 @@ function onEscape() {
     selectImage(null);
     return true;
   }
+  if (selectedSlot) {
+    selectFooterSlot(null);
+    return true;
+  }
   if (pendingSelection) {
     const sel = sheetRefs.win.getSelection();
     if (sel) sel.removeAllRanges();
@@ -1456,6 +1576,9 @@ function onKeyDown(event) {
   if ((event.key === 'Delete' || event.key === 'Backspace') && selectedImage && event.target !== els.source) {
     event.preventDefault();
     removeImage(selectedImage);
+  } else if ((event.key === 'Delete' || event.key === 'Backspace') && selectedSlot && event.target !== els.source) {
+    event.preventDefault();
+    setFooterSlot(selectedSlot, null);
   }
 }
 
@@ -1463,6 +1586,15 @@ function wireSheet() {
   const { doc } = sheetRefs;
 
   doc.addEventListener('mousedown', (event) => {
+    const slot = event.target.closest ? event.target.closest('.footer-slot') : null;
+    if (slot) {
+      event.preventDefault();
+      // An empty slot is a "+ Image" target; a full one is selected.
+      if (slot.dataset.empty === '1') pickFooterImage(slot.dataset.slot);
+      else selectFooterSlot(slot.dataset.slot);
+      return;
+    }
+    if (selectedSlot) selectFooterSlot(null);
     const fig = event.target.closest ? event.target.closest('.doc-image') : null;
     selectImage(fig ? fig.dataset.img : null);
   });
@@ -1578,11 +1710,19 @@ function wire() {
   window.addEventListener('pointerup', endResize);
   window.addEventListener('pointercancel', cancelResize);
   els.imgBar.addEventListener('click', onImageAction);
+  els.footBar.addEventListener('click', onFooterAction);
+  els.footerFile.addEventListener('change', async () => {
+    await footerImageFromFile(els.footerFile.files[0]);
+    els.footerFile.value = '';
+  });
 
   els.preview.addEventListener('scroll', syncTools, { passive: true });
   els.preview.addEventListener('mousedown', (event) => {
     // A click on the canvas around the sheet lets the picture go.
-    if (event.target === els.preview || event.target === els.scaler) selectImage(null);
+    if (event.target === els.preview || event.target === els.scaler) {
+      selectImage(null);
+      selectFooterSlot(null);
+    }
   });
 
   els.print.addEventListener('click', () =>
@@ -1695,6 +1835,14 @@ function exposeForTests() {
       await update();
     },
     imageOf: (id) => ({ ...images[id] }),
+    footer: () => ({ left: footer.left ? { ...footer.left } : null, right: footer.right ? { ...footer.right } : null }),
+    setFooter: async (slot, src, w, h) => {
+      footer = { ...footer, [slot]: src ? { src, alt: '', w, h } : null };
+      commit('footer');
+      await update();
+      saveState();
+    },
+    selectFooter: (slot) => selectFooterSlot(slot),
     selectImage,
     sheetHtml,
     docxBytes: async () => {

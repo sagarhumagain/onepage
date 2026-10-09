@@ -48,6 +48,14 @@ size it by its corner handles, align it, or let the text wrap around it; Esc
 puts it back if a drag went wrong. Width is a percentage of the column, so it
 means the same thing in one column as in three.
 
+**The footer holds two logos.** Every page carries a strip at its foot with a
+left and a right picture — by default the Government of Nepal emblem and the
+WHO Nepal logo. Click one in the page to *Replace…* it or *Remove* it; an empty
+side shows a "+ Image" box in the editor (never in the output) to fill it
+again. The footer is page furniture, like the background colour: it is not in
+the source text, the text area is shortened by exactly its strip so the fitter
+fits to what is left, and with both sides empty the page is as it was.
+
 **The page is the editor.** Type straight into it and the edited page is walked
 back into source text — by the same walker that reads pasted Word HTML, so
 there is only one place where markup becomes text — and the left pane updates
@@ -193,6 +201,7 @@ unbreakable url          13.24    1  1.38       1     2493
 | `src/scale.js` | the typographic scale, shared by CSS and Word |
 | `src/to-docx.js` | blocks → `.docx` at the fitted size |
 | `src/sheet.js` | the A4 iframe, and the standalone file that gets printed |
+| `src/footer.js` | the two footer logos: what is drawn, saved and restored |
 | `src/exporters.js` | print / PDF / Word, with browser fallbacks |
 | `electron/main.js` | window, save dialogs, Chromium's print pipeline |
 
@@ -238,6 +247,11 @@ rearranging itself under the caret mid-sentence.
 stops where the letters do, whatever its width; only a background on the block
 itself reaches the edge of the column. The two are different properties, and in
 Word they are different elements — run shading and paragraph shading.
+
+**The footer must not be in the measured box.** It is positioned at the foot
+of the page and the text box is shortened by its strip with `calc()`, rather
+than the page becoming a flex column: the text box stays an ordinary box of
+definite height, which is what the multicol and sentinel facts above depend on.
 
 **A float is invisible to a sentinel that does not clear it.** A wrapped image
 can hang below the last line of text; an uncleared end-of-content marker sits

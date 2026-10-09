@@ -154,6 +154,20 @@
         </div>
 
         <!--
+          The footer's two pictures: select one to replace it or take it away.
+          An empty slot is filled by clicking its "+ Image" box in the page.
+        -->
+        <div class="img-tools" id="foot-tools" hidden>
+          <div class="img-frame" id="foot-frame"></div>
+          <div class="img-bar" id="foot-bar">
+            <button type="button" class="img-btn" data-act="replace" title="Use another picture here">Replace…</button>
+            <span class="img-bar-sep" aria-hidden="true"></span>
+            <button type="button" class="img-btn img-btn-danger" data-act="remove" title="Leave this side of the footer empty">Remove</button>
+          </div>
+        </div>
+        <input type="file" id="footer-file" accept="image/*" hidden />
+
+        <!--
           The same idea for words: select any run of text in the page and the
           bar appears over it. Everything it sets is stored against the text it
           was applied to, so it survives editing elsewhere in the document.
